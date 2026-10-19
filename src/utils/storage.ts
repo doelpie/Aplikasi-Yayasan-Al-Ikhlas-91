@@ -1,12 +1,14 @@
-import { Member, AppNotification, BroadcastMessage, MemberStatus } from '../types';
+import { Member, AppNotification, BroadcastMessage, MemberStatus, FamilyRole } from '../types';
 import { INITIAL_MEMBERS } from '../data/initialData';
 import { soundEffects } from './sound';
 
-const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v1';
-const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v1';
-const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel';
+import { SYARI_PHOTOS } from '../data/initialData';
 
-// Create BroadcastChannel for real-time cross-tab synchronization
+const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
+const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
+const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
+const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
+
 let channel: BroadcastChannel | null = null;
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
   try {
@@ -24,7 +26,30 @@ export function getStoredMembers(): Member[] {
       localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(INITIAL_MEMBERS));
       return INITIAL_MEMBERS;
     }
-    return JSON.parse(raw);
+    const parsed: Member[] = JSON.parse(raw);
+    
+    // Auto-migrate any existing member without a syari photo
+    let needsUpdate = false;
+    const migrated = parsed.map(m => {
+      if (!m.fotoUrl || m.fotoUrl.includes('unsplash')) {
+        needsUpdate = true;
+        if (m.peranKeluarga === 'istri') {
+          return { ...m, fotoUrl: SYARI_PHOTOS.istriSitiAminah };
+        } else if (m.peranKeluarga === 'anak') {
+          return { ...m, fotoUrl: SYARI_PHOTOS.anakRizky10Thn };
+        } else {
+          return { ...m, fotoUrl: SYARI_PHOTOS.kepalaKeluargaMargo };
+        }
+      }
+      return m;
+    });
+
+    if (needsUpdate) {
+      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+
+    return parsed;
   } catch (e) {
     console.error('Error reading members from localStorage:', e);
     return INITIAL_MEMBERS;
@@ -60,6 +85,35 @@ export function saveNotifications(notifications: AppNotification[]): void {
   }
 }
 
+// User session management for Warga (Kepala Keluarga, Istri, Anak)
+export function getCurrentUserSession(): Member | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_USER_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    // Refresh with latest data from storage
+    const all = getStoredMembers();
+    const fresh = all.find(m => m.id === session.id);
+    if (!fresh || fresh.status !== 'disetujui') {
+      localStorage.removeItem(STORAGE_USER_KEY);
+      return null;
+    }
+    return fresh;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function setCurrentUserSession(member: Member | null): void {
+  if (typeof window === 'undefined') return;
+  if (!member) {
+    localStorage.removeItem(STORAGE_USER_KEY);
+  } else {
+    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(member));
+  }
+}
+
 export function addNotification(notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>): AppNotification {
   const all = getStoredNotifications();
   const newNotif: AppNotification = {
@@ -68,7 +122,7 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
     timestamp: new Date().toISOString(),
     read: false,
   };
-  const updated = [newNotif, ...all.slice(0, 49)]; // keep latest 50
+  const updated = [newNotif, ...all.slice(0, 49)];
   saveNotifications(updated);
   return newNotif;
 }
@@ -78,7 +132,6 @@ export function markAllNotificationsAsRead(): void {
   saveNotifications(all);
 }
 
-// Request Browser Notifications if granted
 export function requestNotificationPermission(): void {
   if (typeof window !== 'undefined' && 'Notification' in window) {
     if (Notification.permission === 'default') {
@@ -102,7 +155,6 @@ export function triggerSystemNotification(title: string, body: string): void {
   }
 }
 
-// Subscribe to real-time events from other tabs
 export function subscribeToRealtimeEvents(
   onMessage: (msg: BroadcastMessage) => void
 ): () => void {
@@ -128,6 +180,30 @@ export function broadcastRealtime(msg: BroadcastMessage): void {
   }
 }
 
+// 6 Digit PIN verification from NIK/KIA
+export function getLast6DigitsNik(nik: string): string {
+  const clean = (nik || '').replace(/\D/g, '');
+  return clean.slice(-6);
+}
+
+export function verifyMemberPin(member: Member, inputPin: string): boolean {
+  const actual6 = getLast6DigitsNik(member.nik);
+  const cleanInput = inputPin.trim().replace(/\D/g, '');
+  return actual6.length === 6 && cleanInput === actual6;
+}
+
+// Family relationship helper
+export function getFamilyMembers(member: Member, allMembers: Member[]): Member[] {
+  if (!member.noKk) return [member];
+  // Match members sharing the same Kartu Keluarga (KK)
+  return allMembers.filter(m => m.noKk === member.noKk);
+}
+
+// List of available Kepala Keluarga for selection
+export function getAvailableKepalaKeluarga(allMembers: Member[]): Member[] {
+  return allMembers.filter(m => m.peranKeluarga === 'kepala_keluarga' && m.status === 'disetujui');
+}
+
 // Member mutations
 export function updateMemberStatus(
   memberId: string,
@@ -141,12 +217,12 @@ export function updateMemberStatus(
   const prevMember = members[index];
   const now = new Date().toISOString();
   
-  // Format registration number if newly approved and doesn't have one
   let regNumber = prevMember.regNumber;
   if (newStatus === 'disetujui' && !regNumber) {
     const year = new Date().getFullYear();
     const randCode = Math.floor(1000 + Math.random() * 9000);
-    regNumber = `${randCode}/YMWM13/II/${year} & L.${memberId}`;
+    const suffix = prevMember.peranKeluarga === 'istri' ? '-B' : prevMember.peranKeluarga === 'anak' ? '-C' : '';
+    regNumber = `${randCode}/YMWM13/II/${year} & L.${memberId}${suffix}`;
   }
 
   const updatedMember: Member = {
@@ -160,29 +236,25 @@ export function updateMemberStatus(
   members[index] = updatedMember;
   saveMembers(members);
 
-  // Play corresponding sound
   if (newStatus === 'disetujui') {
     soundEffects.playSuccess();
   } else if (newStatus === 'ditolak') {
     soundEffects.playWarning();
   }
 
-  // Create notification
   const statusLabel = newStatus === 'disetujui' ? 'DISETUJUI' : newStatus === 'ditolak' ? 'DITOLAK' : 'MENUNGGU ACC';
   const notification = addNotification({
     memberId: updatedMember.id,
     memberName: updatedMember.nama,
     type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
-    message: `Status pendaftaran anggota "${updatedMember.nama}" telah diubah menjadi ${statusLabel}.`,
+    message: `Status pendaftaran "${updatedMember.nama}" (${getPeranLabel(updatedMember.peranKeluarga)}) telah diubah menjadi ${statusLabel}.`,
   });
 
-  // System notification
   triggerSystemNotification(
     `Status Pendaftaran: ${statusLabel}`,
     `Data untuk ${updatedMember.nama} telah ${statusLabel.toLowerCase()}.`
   );
 
-  // Broadcast to other open tabs
   broadcastRealtime({
     type: 'STATUS_CHANGED',
     payload: {
@@ -194,15 +266,25 @@ export function updateMemberStatus(
   return { updatedMember, notification };
 }
 
-export function addNewMember(data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }): Member {
+export function addNewMember(
+  data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
+): Member {
   const members = getStoredMembers();
   
-  // Generate ID e.g. '0119'
-  const maxId = members.reduce((max, m) => {
-    const num = parseInt(m.id, 10);
+  // Generate ID e.g. '0120'
+  const maxNum = members.reduce((max, m) => {
+    const root = m.id.split('-')[0];
+    const num = parseInt(root, 10);
     return !isNaN(num) && num > max ? num : max;
-  }, 110);
-  const nextId = String(maxId + 1).padStart(4, '0');
+  }, 118);
+
+  let nextId = String(maxNum + 1).padStart(4, '0');
+  
+  // If family member added to existing head of family
+  if (data.kepalaKeluargaId) {
+    const existingFamilyCount = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
+    nextId = `${data.kepalaKeluargaId}-${existingFamilyCount}`;
+  }
 
   const now = new Date().toISOString();
   const initialStatus = data.status || 'menunggu';
@@ -215,20 +297,25 @@ export function addNewMember(data: Omit<Member, 'id' | 'tanggalDaftar' | 'status
     tanggalDisetujui: initialStatus === 'disetujui' ? now : undefined,
   };
 
+  // If head of family, update head's family count
+  if (data.peranKeluarga === 'kepala_keluarga') {
+    newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
+  }
+
   const updated = [newMember, ...members];
   saveMembers(updated);
 
   soundEffects.playPing();
 
-  // Notification for admin
+  const roleText = getPeranLabel(newMember.peranKeluarga);
   const notification = addNotification({
     memberId: newMember.id,
     memberName: newMember.nama,
     type: 'new_registration',
-    message: `Pendaftaran baru masuk atas nama "${newMember.nama}" (ID: ${newMember.id}). Menunggu persetujuan pengurus.`,
+    message: `Pendaftaran baru: "${newMember.nama}" sebagai ${roleText} (No. KK: ${newMember.noKk}). Menunggu verifikasi pengurus.`,
   });
 
-  triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama}`);
+  triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (${roleText})`);
 
   broadcastRealtime({
     type: 'NEW_REGISTRATION',
@@ -248,6 +335,12 @@ export function updateMember(updatedMember: Member): void {
     members[index] = updatedMember;
     saveMembers(members);
 
+    // If session matches updated member, sync session
+    const currentSession = getCurrentUserSession();
+    if (currentSession && currentSession.id === updatedMember.id) {
+      setCurrentUserSession(updatedMember);
+    }
+
     broadcastRealtime({
       type: 'DATA_SYNC',
       payload: { member: updatedMember },
@@ -264,12 +357,25 @@ export function deleteMember(id: string): void {
 export function resetToInitialData(): void {
   saveMembers(INITIAL_MEMBERS);
   saveNotifications([]);
+  setCurrentUserSession(null);
   if (typeof window !== 'undefined') {
     window.location.reload();
   }
 }
 
-// Utility: get initials from name (e.g., "Margo Suwito Utomo" -> "MS")
+export function getPeranLabel(role: FamilyRole): string {
+  switch (role) {
+    case 'kepala_keluarga':
+      return 'Kepala Keluarga';
+    case 'istri':
+      return 'Istri';
+    case 'anak':
+      return 'Anak';
+    default:
+      return 'Anggota';
+  }
+}
+
 export function getInitials(name: string): string {
   if (!name) return 'AI';
   const clean = name.trim().replace(/[^a-zA-Z\s]/g, '');
@@ -279,16 +385,22 @@ export function getInitials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-// Utility: mask phone number except last 3 or 4 digits
+export function maskNik(nik: string): string {
+  if (!nik) return '••••••••••••••••';
+  const clean = nik.replace(/\D/g, '');
+  if (clean.length <= 6) return clean;
+  const prefix = clean.slice(0, 6);
+  const suffix = clean.slice(-4);
+  return `${prefix}••••••${suffix}`;
+}
+
 export function maskPhoneNumber(phone: string): string {
   if (!phone) return '••••••••••••';
   const clean = phone.replace(/\D/g, '');
   if (clean.length <= 4) return clean;
-  const last3or4 = clean.slice(-3); // matches screenshot `.........037`
-  return '.........' + last3or4;
+  return clean.slice(0, 4) + '••••' + clean.slice(-4);
 }
 
-// Format Date in Indonesian (e.g. "16 Oktober 2026")
 export function formatIndonesianDate(isoOrDateString?: string): string {
   if (!isoOrDateString) {
     const today = new Date();

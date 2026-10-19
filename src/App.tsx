@@ -4,7 +4,6 @@ import {
   getStoredMembers, 
   saveMembers, 
   getStoredNotifications, 
-  addNotification, 
   markAllNotificationsAsRead, 
   subscribeToRealtimeEvents, 
   updateMemberStatus, 
@@ -12,7 +11,9 @@ import {
   updateMember, 
   deleteMember, 
   resetToInitialData,
-  requestNotificationPermission 
+  requestNotificationPermission,
+  getCurrentUserSession,
+  setCurrentUserSession 
 } from './utils/storage';
 import { soundEffects } from './utils/sound';
 import { Header } from './components/Header';
@@ -20,18 +21,22 @@ import { MemberList } from './components/MemberList';
 import { VerifyCardModal } from './components/VerifyCardModal';
 import { MemberCardModal } from './components/MemberCardModal';
 import { RegisterForm } from './components/RegisterForm';
+import { FamilyPortal } from './components/FamilyPortal';
 import { InfoSection } from './components/InfoSection';
 import { AdminLogin } from './components/AdminLogin';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminMemberForm } from './components/AdminMemberForm';
 import { DocumentViewerModal } from './components/DocumentViewerModal';
 import { NotificationToast } from './components/NotificationToast';
-import { Users, FilePenLine, Info, Shield, Plus, Sparkles } from 'lucide-react';
+import { Users, FilePenLine, Info, Shield, User } from 'lucide-react';
 
 export default function App() {
-  // Navigation State
-  const [activeTab, setActiveTab] = useState<'anggota' | 'daftar' | 'info' | 'admin'>('anggota');
+  // Navigation State: 'anggota' | 'daftar' | 'profil' | 'info' | 'admin'
+  const [activeTab, setActiveTab] = useState<'anggota' | 'daftar' | 'profil' | 'info' | 'admin'>('anggota');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+
+  // Warga User Session (Kepala Keluarga, Istri, Anak)
+  const [currentUserSession, setSessionMember] = useState<Member | null>(() => getCurrentUserSession());
 
   // Data State
   const [members, setMembers] = useState<Member[]>(() => getStoredMembers());
@@ -52,9 +57,17 @@ export default function App() {
   // Sync real-time updates across tabs
   const handleRealtimeMessage = useCallback((msg: BroadcastMessage) => {
     if (msg.type === 'STATUS_CHANGED' || msg.type === 'NEW_REGISTRATION' || msg.type === 'DATA_SYNC') {
-      // Reload fresh data from storage
       const refreshedMembers = getStoredMembers();
       setMembers(refreshedMembers);
+
+      // Refresh current session if matches
+      if (currentUserSession) {
+        const freshUser = refreshedMembers.find(m => m.id === currentUserSession.id);
+        if (freshUser) {
+          setSessionMember(freshUser);
+          setCurrentUserSession(freshUser);
+        }
+      }
 
       if (msg.payload.notification) {
         setNotifications(getStoredNotifications());
@@ -71,20 +84,20 @@ export default function App() {
         }
       }
     }
-  }, [soundEnabled]);
+  }, [soundEnabled, currentUserSession]);
 
   useEffect(() => {
-    // Request notification permission smoothly
     requestNotificationPermission();
 
-    // Subscribe to BroadcastChannel for real-time synchronization between tabs
     const unsubscribe = subscribeToRealtimeEvents(handleRealtimeMessage);
 
-    // Also listen to storage events
     const onStorageChange = (e: StorageEvent) => {
       if (e.key?.includes('yayasan_alikhlas')) {
-        setMembers(getStoredMembers());
+        const refreshed = getStoredMembers();
+        setMembers(refreshed);
         setNotifications(getStoredNotifications());
+        const freshUser = getCurrentUserSession();
+        setSessionMember(freshUser);
       }
     };
     window.addEventListener('storage', onStorageChange);
@@ -105,19 +118,28 @@ export default function App() {
     }
   }, [currentToast]);
 
-  // Public stats calculations
+  // Public stats
   const totalKepalaKeluarga = useMemo(() => {
-    return members.filter(m => m.status === 'disetujui').length;
+    return members.filter(m => m.status === 'disetujui' && m.peranKeluarga === 'kepala_keluarga').length;
   }, [members]);
 
   const totalJiwa = useMemo(() => {
-    return members
-      .filter(m => m.status === 'disetujui')
-      .reduce((sum, m) => sum + 1 + (Number(m.jumlahKeluarga) || 0), 0);
+    return members.filter(m => m.status === 'disetujui').length;
   }, [members]);
 
-  // Handlers for Public View
+  // Handlers for Public / Warga Actions
   const handleOpenCardVerification = (member: Member) => {
+    // If the member is already logged in as self, open card immediately!
+    if (currentUserSession && currentUserSession.id === member.id) {
+      setCardModalMember(member);
+      return;
+    }
+    // If the user is logged in as Kepala Keluarga and this is his family member, open card immediately!
+    if (currentUserSession && currentUserSession.peranKeluarga === 'kepala_keluarga' && currentUserSession.noKk === member.noKk) {
+      setCardModalMember(member);
+      return;
+    }
+    // Otherwise, request 6-digit PIN of NIK
     setVerifyingMember(member);
   };
 
@@ -131,19 +153,36 @@ export default function App() {
     setMembers(getStoredMembers());
     setNotifications(getStoredNotifications());
     
-    // Trigger real-time toast
     const notif: AppNotification = {
       id: 'local_' + Date.now(),
       memberId: created.id,
       memberName: created.nama,
       type: 'new_registration',
-      message: `Pendaftaran baru atas nama "${created.nama}" berhasil dikirim! Menunggu ACC pengurus.`,
+      message: `Pendaftaran "${created.nama}" berhasil dikirim! Menunggu ACC pengurus.`,
       timestamp: new Date().toISOString(),
       read: false,
     };
     setCurrentToast(notif);
 
     return created;
+  };
+
+  // User session login & logout
+  const handleLoginSession = (member: Member) => {
+    setSessionMember(member);
+    setCurrentUserSession(member);
+  };
+
+  const handleLogoutSession = () => {
+    setSessionMember(null);
+    setCurrentUserSession(null);
+  };
+
+  // Self update from Profile
+  const handleUpdateSelf = (updated: Member) => {
+    updateMember(updated);
+    setSessionMember(updated);
+    setMembers(getStoredMembers());
   };
 
   // Handlers for Admin
@@ -171,7 +210,6 @@ export default function App() {
 
   const handleSaveAdminMember = (memberData: Partial<Member>) => {
     if (editingMember) {
-      // Edit existing
       const updated: Member = {
         ...editingMember,
         ...memberData,
@@ -179,7 +217,6 @@ export default function App() {
       updateMember(updated);
       setEditingMember(null);
     } else {
-      // Add new
       addNewMember({
         ...memberData as any,
         status: memberData.status || 'disetujui',
@@ -195,11 +232,14 @@ export default function App() {
     if (window.confirm(`Apakah Anda yakin ingin menghapus data anggota "${toDelete?.nama || memberId}"?`)) {
       deleteMember(memberId);
       setMembers(getStoredMembers());
+      if (currentUserSession?.id === memberId) {
+        handleLogoutSession();
+      }
     }
   };
 
   const handleResetData = () => {
-    if (window.confirm('Kembalikan semua data ke data contoh awal?')) {
+    if (window.confirm('Kembalikan semua data ke data contoh awal (Hijau NU)?')) {
       resetToInitialData();
     }
   };
@@ -210,7 +250,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#faf5f5] text-stone-900 font-sans selection:bg-[#83141a] selection:text-white relative">
+    <div className="min-h-screen bg-[#f4f8f5] text-stone-900 font-sans selection:bg-[#0b5d34] selection:text-white relative">
       {/* Real-time Toast Notifications & Drawer */}
       <NotificationToast
         currentToast={currentToast}
@@ -221,7 +261,7 @@ export default function App() {
         onMarkAllRead={handleMarkAllRead}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Router */}
       {activeTab === 'admin' ? (
         isAdminLoggedIn ? (
           <AdminDashboard
@@ -249,7 +289,7 @@ export default function App() {
         )
       ) : (
         <div className="min-h-screen flex flex-col">
-          {/* Header */}
+          {/* Header with Hijau NU Theme */}
           <Header
             totalKepalaKeluarga={totalKepalaKeluarga}
             totalJiwa={totalJiwa}
@@ -257,6 +297,8 @@ export default function App() {
             onToggleSound={() => setSoundEnabled(!soundEnabled)}
             notifications={notifications}
             onOpenNotifications={() => setIsOpenNotifDrawer(true)}
+            currentUserSession={currentUserSession}
+            onGoToProfile={() => setActiveTab('profil')}
           />
 
           {/* Active View Tab */}
@@ -271,8 +313,28 @@ export default function App() {
 
             {activeTab === 'daftar' && (
               <RegisterForm
+                allMembers={members}
+                currentUserSession={currentUserSession}
                 onSubmit={handlePublicRegister}
-                onSuccessRedirect={() => setActiveTab('anggota')}
+                onSuccessRedirect={() => setActiveTab(currentUserSession ? 'profil' : 'anggota')}
+              />
+            )}
+
+            {activeTab === 'profil' && (
+              <FamilyPortal
+                currentUserSession={currentUserSession}
+                allMembers={members}
+                onLoginSession={handleLoginSession}
+                onLogoutSession={handleLogoutSession}
+                onViewCard={(m) => setCardModalMember(m)}
+                onEditMember={(m) => {
+                  // Only allow editing family member if current user is Kepala Keluarga
+                  if (currentUserSession?.peranKeluarga === 'kepala_keluarga' && currentUserSession.noKk === m.noKk) {
+                    setEditingMember(m);
+                  }
+                }}
+                onRegisterFamilyMember={() => setActiveTab('daftar')}
+                onUpdateSelf={handleUpdateSelf}
               />
             )}
 
@@ -280,32 +342,33 @@ export default function App() {
               <InfoSection
                 members={members}
                 onOpenCardVerification={handleOpenCardVerification}
+                onGoToPortal={() => setActiveTab('profil')}
               />
             )}
           </main>
 
-          {/* Floating Bottom Pill Navigation Bar matching IMG-20261018-WA0014.jpg */}
+          {/* Floating Bottom Pill Navigation Bar - Hijau NU Theme */}
           <div className="fixed bottom-4 inset-x-0 z-40 flex justify-center px-4 print:hidden pointer-events-none">
-            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-gray-200/90 shadow-2xl rounded-full p-1.5 flex items-center gap-1 sm:gap-2">
+            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-emerald-900/15 shadow-2xl rounded-full p-1.5 flex items-center gap-1 sm:gap-2">
               {/* Tab 1: Anggota */}
               <button
                 onClick={() => setActiveTab('anggota')}
-                className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
                   activeTab === 'anggota'
-                    ? 'bg-[#83141a] text-white shadow-md'
+                    ? 'bg-[#0b5d34] text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
-                <Users className={`w-4 h-4 ${activeTab === 'anggota' ? 'text-white' : 'text-blue-600'}`} />
+                <Users className={`w-4 h-4 ${activeTab === 'anggota' ? 'text-white' : 'text-emerald-700'}`} />
                 <span className="text-xs sm:text-sm font-bold">Anggota</span>
               </button>
 
               {/* Tab 2: Daftar */}
               <button
                 onClick={() => setActiveTab('daftar')}
-                className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
                   activeTab === 'daftar'
-                    ? 'bg-[#83141a] text-white shadow-md'
+                    ? 'bg-[#0b5d34] text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
@@ -313,12 +376,25 @@ export default function App() {
                 <span className="text-xs sm:text-sm font-bold">Daftar</span>
               </button>
 
-              {/* Tab 3: Info */}
+              {/* Tab 3: Profil Saya / Portal Keluarga */}
+              <button
+                onClick={() => setActiveTab('profil')}
+                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
+                  activeTab === 'profil'
+                    ? 'bg-[#0b5d34] text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <User className={`w-4 h-4 ${activeTab === 'profil' ? 'text-white' : 'text-blue-600'}`} />
+                <span className="text-xs sm:text-sm font-bold">Profil</span>
+              </button>
+
+              {/* Tab 4: Info */}
               <button
                 onClick={() => setActiveTab('info')}
-                className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
                   activeTab === 'info'
-                    ? 'bg-[#83141a] text-white shadow-md'
+                    ? 'bg-[#0b5d34] text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
@@ -326,13 +402,13 @@ export default function App() {
                 <span className="text-xs sm:text-sm font-bold">Info</span>
               </button>
 
-              {/* Tab 4: Admin Switch */}
+              {/* Tab 5: Admin Switch */}
               <button
                 onClick={() => setActiveTab('admin')}
-                className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                className="flex items-center gap-1 px-3 py-2.5 rounded-full transition-all cursor-pointer text-gray-500 hover:text-gray-900 hover:bg-gray-100"
                 title="Masuk Pengurus/Admin"
               >
-                <Shield className="w-4 h-4 text-[#83141a]" />
+                <Shield className="w-4 h-4 text-[#0b5d34]" />
                 <span className="text-xs font-bold hidden sm:inline">Admin</span>
               </button>
             </div>
@@ -341,7 +417,7 @@ export default function App() {
       )}
 
       {/* MODALS */}
-      {/* 1. Verify Card PIN Modal (4 digit HP) */}
+      {/* 1. Verify Card PIN Modal (6 digit terakhir KTP) */}
       {verifyingMember && (
         <VerifyCardModal
           member={verifyingMember}
@@ -350,7 +426,7 @@ export default function App() {
         />
       )}
 
-      {/* 2. Official Member Card Modal */}
+      {/* 2. Official Member Card Modal with Photo */}
       {cardModalMember && (
         <MemberCardModal
           member={cardModalMember}
@@ -363,6 +439,7 @@ export default function App() {
       {(isAddingAdmin || editingMember) && (
         <AdminMemberForm
           member={editingMember}
+          allMembers={members}
           onClose={() => {
             setIsAddingAdmin(false);
             setEditingMember(null);
@@ -371,7 +448,7 @@ export default function App() {
         />
       )}
 
-      {/* 4. Document Viewer Modal (KTP / KK) */}
+      {/* 4. Document Viewer Modal */}
       {viewingDoc && (
         <DocumentViewerModal
           title={viewingDoc.title}

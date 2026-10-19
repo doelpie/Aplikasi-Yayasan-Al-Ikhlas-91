@@ -1,18 +1,36 @@
+export type FamilyRole = 'kepala_keluarga' | 'istri' | 'anak';
 export type MemberStatus = 'menunggu' | 'disetujui' | 'ditolak';
 
 export interface Member {
   id: string; // e.g., '0114'
-  regNumber?: string; // e.g., '1616/YMWM13/II/2017 & L.065'
-  nama: string; // Nama Kepala Keluarga
-  tempatTanggalLahir: string; // e.g., 'Lamongan, 04 Mar 1987'
-  alamat: string;
-  jumlahKeluarga: number; // Jumlah keluarga/tanggungan (e.g., 3 org)
-  noHp: string; // e.g., '081234567037'
+  regNumber?: string; // e.g., '1614/YMWM13/II/2026 & L.063'
+  
+  // Wajib Identitas Sesuai KTP / KIA
+  nik: string; // 16 digit Nomor KTP / KIA (wajib)
+  nama: string; // Nama Lengkap Sesuai KTP (wajib)
+  alamat: string; // Alamat Lengkap (wajib)
+  noHp: string; // Nomor HP / WA aktif (wajib)
+  
+  // Relasi & Kartu Keluarga
+  noKk: string; // Nomor Kartu Keluarga (16 digit)
+  peranKeluarga: FamilyRole; // 'kepala_keluarga' | 'istri' | 'anak'
+  kepalaKeluargaId?: string; // Relasi ke ID Kepala Keluarga (jika istri atau anak)
+  namaKepalaKeluarga?: string; // Nama Kepala Keluarga terkait
+  
+  // Data Tambahan
+  tempatTanggalLahir: string; // e.g., 'Surabaya, 12 Mei 1978'
+  jumlahKeluarga?: number; // Total anggota keluarga (khusus kepala keluarga)
   email?: string;
-  ktpUrl?: string; // base64 or file preview url
+  fotoUrl?: string; // Foto diri / Pas foto untuk kartu anggota (wajib)
+  fotoName?: string;
+  
+  // Dokumen Lampiran
+  ktpUrl?: string;
   ktpName?: string;
-  kkUrl?: string; // base64 or file preview url
+  kkUrl?: string;
   kkName?: string;
+  
+  // Status Approval Admin
   status: MemberStatus;
   catatanPenolakan?: string;
   tanggalDaftar: string; // ISO date string
@@ -35,4 +53,10 @@ export interface BroadcastMessage {
     member: Member;
     notification?: AppNotification;
   };
+}
+
+// Session login untuk Warga
+export interface UserSession {
+  member: Member;
+  isLoggedIn: boolean;
 }

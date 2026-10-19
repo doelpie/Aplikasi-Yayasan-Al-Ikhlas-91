@@ -16,9 +16,10 @@ import {
   RotateCcw,
   Bell,
   Sparkles,
-  ExternalLink,
-  ShieldAlert
+  Users,
+  Camera
 } from 'lucide-react';
+import { getPeranLabel, maskNik } from '../utils/storage';
 
 interface AdminDashboardProps {
   members: Member[];
@@ -51,15 +52,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'semua' | MemberStatus>('semua');
+  const [roleFilter, setRoleFilter] = useState<'semua' | 'kepala_keluarga' | 'istri' | 'anak'>('semua');
   const [rejectingMember, setRejectingMember] = useState<Member | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
   // Statistics
   const countApproved = useMemo(() => members.filter(m => m.status === 'disetujui').length, [members]);
-  const countTotalJiwa = useMemo(() => {
-    return members
-      .filter(m => m.status === 'disetujui')
-      .reduce((acc, m) => acc + 1 + (Number(m.jumlahKeluarga) || 0), 0);
+  const countKepalaKeluarga = useMemo(() => {
+    return members.filter(m => m.status === 'disetujui' && m.peranKeluarga === 'kepala_keluarga').length;
   }, [members]);
   const countPending = useMemo(() => members.filter(m => m.status === 'menunggu').length, [members]);
   const countRejected = useMemo(() => members.filter(m => m.status === 'ditolak').length, [members]);
@@ -70,18 +70,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (statusFilter !== 'semua') {
       list = list.filter(m => m.status === statusFilter);
     }
+    if (roleFilter !== 'semua') {
+      list = list.filter(m => m.peranKeluarga === roleFilter);
+    }
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim();
       list = list.filter(m => 
         m.nama.toLowerCase().includes(q) ||
+        (m.nik && m.nik.includes(q)) ||
+        (m.noKk && m.noKk.includes(q)) ||
         m.alamat.toLowerCase().includes(q) ||
-        m.noHp.toLowerCase().includes(q) ||
-        (m.email && m.email.toLowerCase().includes(q)) ||
+        m.noHp.includes(q) ||
         m.id.toLowerCase().includes(q)
       );
     }
     return list;
-  }, [members, statusFilter, searchTerm]);
+  }, [members, statusFilter, roleFilter, searchTerm]);
 
   // Open WhatsApp with friendly pre-filled text
   const handleOpenWhatsApp = (member: Member) => {
@@ -93,14 +97,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       formattedHp = '62' + formattedHp;
     }
 
-    const last4 = cleanHp.slice(-4);
+    const roleText = getPeranLabel(member.peranKeluarga);
     let message = '';
     if (member.status === 'disetujui') {
-      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nAlhamdulillah, pendaftaran keanggotaan Anda di *Yayasan Al Ikhlas Sembilan Satu* telah *DISETUJUI* dengan ID Anggota: *${member.id}*.\n\nAnda dapat mengunduh dan mencetak Kartu Anggota Resmi dengan memasukkan 4 digit terakhir nomor HP Anda (*${last4}*).\n\nTerima kasih atas partisipasi Anda.`;
+      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nAlhamdulillah, pendaftaran keanggotaan Anda sebagai *${roleText}* di *Yayasan Al Ikhlas Sembilan Satu (NU)* telah *DISETUJUI*.\nID Anggota: *${member.id}*\nNo. KK: *${member.noKk}*\n\nAnda dapat membuka dan mengunduh Kartu Anggota Resmi dengan memasukkan 6 digit terakhir nomor KTP/KIA Anda.\n\nTerima kasih atas partisipasi Anda.`;
     } else if (member.status === 'ditolak') {
-      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nMohon maaf, data pendaftaran Anda di *Yayasan Al Ikhlas Sembilan Satu* belum dapat disetujui.\n*Catatan*: ${member.catatanPenolakan || 'Data administrasi belum lengkap'}.\n\nSilakan hubungi pengurus untuk perbaikan data. Terima kasih.`;
+      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nMohon maaf, pendaftaran keanggotaan Anda di *Yayasan Al Ikhlas Sembilan Satu* belum dapat disetujui.\n*Catatan*: ${member.catatanPenolakan || 'Data administrasi belum lengkap'}.\n\nSilakan hubungi pengurus untuk perbaikan data. Terima kasih.`;
     } else {
-      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nKami dari Pengurus *Yayasan Al Ikhlas Sembilan Satu* sedang memverifikasi berkas pendaftaran Anda. Mohon ditunggu informasi selanjutnya. Terima kasih.`;
+      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nKami dari Pengurus *Yayasan Al Ikhlas Sembilan Satu* sedang memverifikasi berkas pendaftaran Anda sebagai *${roleText}*. Mohon ditunggu informasi selanjutnya. Terima kasih.`;
     }
 
     const waUrl = `https://wa.me/${formattedHp}?text=${encodeURIComponent(message)}`;
@@ -110,28 +114,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Export to CSV
   const handleExportCSV = () => {
     const headers = [
-      'ID',
-      'No Registrasi',
-      'Nama Kepala Keluarga',
+      'ID Anggota',
+      'Status Hubungan',
+      'NIK (KTP/KIA)',
+      'Nama Sesuai KTP',
+      'No Kartu Keluarga (KK)',
+      'Kepala Keluarga',
       'Tempat Tanggal Lahir',
-      'Alamat',
-      'Jumlah Keluarga',
+      'Alamat Domisili',
       'No Telp/HP',
-      'Email',
-      'Status',
+      'Status Approval',
       'Tanggal Daftar',
       'Tanggal Disetujui',
     ];
 
     const rows = members.map(m => [
       `"${m.id}"`,
-      `"${m.regNumber || '-'}"`,
+      `"${getPeranLabel(m.peranKeluarga)}"`,
+      `"'${m.nik}"`,
       `"${m.nama.replace(/"/g, '""')}"`,
+      `"'${m.noKk}"`,
+      `"${m.namaKepalaKeluarga || (m.peranKeluarga === 'kepala_keluarga' ? m.nama : '-')}"`,
       `"${m.tempatTanggalLahir.replace(/"/g, '""')}"`,
       `"${m.alamat.replace(/"/g, '""')}"`,
-      m.jumlahKeluarga,
       `"'${m.noHp}"`,
-      `"${m.email || '-'}"`,
       `"${m.status.toUpperCase()}"`,
       `"${m.tanggalDaftar}"`,
       `"${m.tanggalDisetujui || '-'}"`,
@@ -141,24 +147,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Data_Anggota_Yayasan_Al_Ikhlas_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `Data_Anggota_Yayasan_Al_Ikhlas_NU_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="min-h-screen bg-[#faf5f5] pb-28">
-      {/* Red Header matching Screenshot_2026-10-19-10-03-23-048 */}
-      <div className="bg-[#83141a] text-white pt-5 pb-10 px-4 sm:px-6 shadow-md">
+    <div className="min-h-screen bg-[#f4f8f5] pb-28">
+      {/* Hijau NU Header */}
+      <div className="bg-[#0b5d34] text-white pt-5 pb-10 px-4 sm:px-6 shadow-md">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-wider uppercase leading-none">
-              ADMIN ANGGOTA
-            </h1>
-            <p className="text-xs text-red-200 mt-1 font-medium">
-              Yayasan Al Ikhlas Sembilan Satu
-            </p>
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-full bg-white text-[#0b5d34] flex items-center justify-center font-black text-lg shadow-sm border-2 border-amber-300">
+              AI
+            </div>
+            <div>
+              <h1 className="text-lg sm:text-xl font-black tracking-wider uppercase leading-none">
+                ADMIN ANGGOTA & KELUARGA
+              </h1>
+              <p className="text-xs text-emerald-200 mt-1 font-medium">
+                Yayasan Al Ikhlas Sembilan Satu (NU)
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -176,7 +187,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
             <button
               onClick={onLogout}
-              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
               title="Keluar dari Admin"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -187,34 +198,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-6">
-        {/* 4 Top Stat Cards matching screenshot 10-03-23-048 */}
+        {/* 4 Top Stat Cards */}
         <div className="grid grid-cols-4 gap-2 sm:gap-3">
-          {/* 1. Kepala Keluarga */}
           <div className="bg-white rounded-2xl p-3 sm:p-4 text-center shadow-xs border border-gray-100">
-            <div className="text-xl sm:text-3xl font-extrabold text-[#83141a]">
-              {countApproved}
+            <div className="text-xl sm:text-3xl font-extrabold text-[#0b5d34]">
+              {countKepalaKeluarga}
             </div>
-            <div className="text-[10px] sm:text-xs font-medium text-gray-600 mt-0.5 leading-tight">
-              Kepala Keluarga
+            <div className="text-[10px] sm:text-xs font-semibold text-gray-600 mt-0.5 leading-tight">
+              Kepala Klrg
             </div>
           </div>
 
-          {/* 2. Total Jiwa */}
           <div className="bg-white rounded-2xl p-3 sm:p-4 text-center shadow-xs border border-gray-100">
-            <div className="text-xl sm:text-3xl font-extrabold text-[#83141a]">
-              {countTotalJiwa}
+            <div className="text-xl sm:text-3xl font-extrabold text-emerald-700">
+              {countApproved}
             </div>
-            <div className="text-[10px] sm:text-xs font-medium text-gray-600 mt-0.5 leading-tight">
+            <div className="text-[10px] sm:text-xs font-semibold text-gray-600 mt-0.5 leading-tight">
               Total Jiwa
             </div>
           </div>
 
-          {/* 3. Menunggu ACC */}
           <div className="bg-white rounded-2xl p-3 sm:p-4 text-center shadow-xs border border-gray-100 relative">
             <div className={`text-xl sm:text-3xl font-extrabold ${countPending > 0 ? 'text-amber-600' : 'text-gray-700'}`}>
               {countPending}
             </div>
-            <div className="text-[10px] sm:text-xs font-medium text-gray-600 mt-0.5 leading-tight">
+            <div className="text-[10px] sm:text-xs font-semibold text-gray-600 mt-0.5 leading-tight">
               Menunggu ACC
             </div>
             {countPending > 0 && (
@@ -222,12 +230,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             )}
           </div>
 
-          {/* 4. Ditolak */}
           <div className="bg-white rounded-2xl p-3 sm:p-4 text-center shadow-xs border border-gray-100">
             <div className="text-xl sm:text-3xl font-extrabold text-rose-700">
               {countRejected}
             </div>
-            <div className="text-[10px] sm:text-xs font-medium text-gray-600 mt-0.5 leading-tight">
+            <div className="text-[10px] sm:text-xs font-semibold text-gray-600 mt-0.5 leading-tight">
               Ditolak
             </div>
           </div>
@@ -242,18 +249,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari nama / alamat / telp / email..."
-            className="w-full pl-10 pr-4 py-3 bg-white text-gray-800 text-xs sm:text-sm font-medium rounded-2xl shadow-xs border border-gray-200/80 focus:outline-none focus:ring-2 focus:ring-[#83141a]/30 focus:border-[#83141a] transition-all placeholder:text-gray-400"
+            placeholder="Cari nama / NIK / No. KK / alamat / telp..."
+            className="w-full pl-10 pr-4 py-3 bg-white text-gray-800 text-xs sm:text-sm font-medium rounded-2xl shadow-xs border border-gray-200/80 focus:outline-none focus:ring-2 focus:ring-[#0b5d34]/30 focus:border-[#0b5d34] transition-all placeholder:text-gray-400"
           />
         </div>
 
-        {/* Filter Status Tabs: [Semua] [Menunggu] [Disetujui] [Ditolak] */}
+        {/* Status Filter Tabs */}
         <div className="flex gap-2 mt-3 overflow-x-auto pb-1 scrollbar-none">
           <button
             onClick={() => setStatusFilter('semua')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               statusFilter === 'semua'
-                ? 'bg-[#83141a] text-white shadow-xs'
+                ? 'bg-[#0b5d34] text-white shadow-xs'
                 : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200/70'
             }`}
           >
@@ -261,7 +268,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
           <button
             onClick={() => setStatusFilter('menunggu')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
               statusFilter === 'menunggu'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200/70'
@@ -269,14 +276,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <span>Menunggu</span>
             {countPending > 0 && (
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusFilter === 'menunggu' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'}`}>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 text-amber-800">
                 {countPending}
               </span>
             )}
           </button>
           <button
             onClick={() => setStatusFilter('disetujui')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               statusFilter === 'disetujui'
                 ? 'bg-emerald-700 text-white shadow-xs'
                 : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200/70'
@@ -286,7 +293,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
           <button
             onClick={() => setStatusFilter('ditolak')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               statusFilter === 'ditolak'
                 ? 'bg-rose-700 text-white shadow-xs'
                 : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200/70'
@@ -296,171 +303,210 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
         </div>
 
-        {/* Members Cards List matching Screenshot 10-03-23-048 & 10-03-42-339 */}
-        <div className="mt-4 space-y-3">
+        {/* Role Filter Tabs: Kepala Keluarga | Istri | Anak */}
+        <div className="flex gap-1.5 mt-2 overflow-x-auto pb-1 text-[11px]">
+          <span className="text-gray-500 py-1 font-semibold">Filter Peran:</span>
+          {(['semua', 'kepala_keluarga', 'istri', 'anak'] as const).map(role => (
+            <button
+              key={role}
+              onClick={() => setRoleFilter(role)}
+              className={`px-2.5 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
+                roleFilter === role
+                  ? 'bg-emerald-100 text-[#0b5d34] border border-emerald-300 font-bold'
+                  : 'text-gray-600 hover:bg-gray-200 bg-white border border-gray-200'
+              }`}
+            >
+              {role === 'semua' ? 'Semua Peran' : getPeranLabel(role)}
+            </button>
+          ))}
+        </div>
+
+        {/* Member Cards List */}
+        <div className="mt-3 space-y-3">
           {filteredList.length > 0 ? (
-            filteredList.map((member, index) => {
-              const cleanHp = member.noHp.replace(/\D/g, '');
-              const last4 = cleanHp.slice(-4);
+            filteredList.map((member) => {
+              const roleText = getPeranLabel(member.peranKeluarga);
               return (
                 <div
                   key={member.id}
                   className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-gray-100 transition-all hover:shadow-md"
                 >
-                  {/* Row 1: Index. Name + Status Badge */}
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-900 leading-snug">
-                      {member.id}. {member.nama.toUpperCase()}
-                    </h3>
-
-                    {member.status === 'disetujui' && (
-                      <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200 shrink-0">
-                        Disetujui
-                      </span>
-                    )}
-                    {member.status === 'menunggu' && (
-                      <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 shrink-0 flex items-center gap-1 animate-pulse">
-                        <Clock className="w-3 h-3" /> Menunggu
-                      </span>
-                    )}
-                    {member.status === 'ditolak' && (
-                      <span className="px-2.5 py-0.5 rounded-md bg-rose-50 text-rose-700 text-xs font-bold border border-rose-200 shrink-0">
-                        Ditolak
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Row 2: Tempat & Tanggal Lahir */}
-                  <div className="text-xs text-gray-600 uppercase font-semibold mt-1">
-                    {member.tempatTanggalLahir || '-'}
-                  </div>
-
-                  {/* Row 3: Alamat */}
-                  <div className="text-xs sm:text-sm text-gray-800 font-medium mt-1 leading-relaxed">
-                    {member.alamat}
-                  </div>
-
-                  {/* Row 4: Jumlah Orang · Telp · No Registrasi */}
-                  <div className="text-xs text-gray-600 mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="font-semibold text-gray-900">{member.jumlahKeluarga} orang</span>
-                    <span>·</span>
-                    <span className="font-semibold font-mono text-gray-800">{member.noHp}</span>
-                    <span>·</span>
-                    <span className="text-gray-500">
-                      No: {member.regNumber || 'Dalam Proses'}
-                    </span>
-                    <span>·</span>
-                    <span className="text-[11px] bg-gray-100 text-gray-700 px-1.5 py-0.2 rounded font-mono">
-                      PIN: {last4}
-                    </span>
-                  </div>
-
-                  {/* Documents & Note Status */}
-                  <div className="mt-2.5 pt-2 border-t border-gray-100 flex flex-wrap items-center gap-3 text-xs">
-                    {member.ktpUrl ? (
-                      <button
-                        onClick={() => onViewDoc(`KTP - ${member.nama}`, member.ktpUrl, member.ktpName)}
-                        className="text-emerald-700 hover:text-emerald-800 font-medium inline-flex items-center gap-1 underline cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>KTP terlampir</span>
-                      </button>
-                    ) : (
-                      <span className="text-red-500 font-medium">KTP kosong</span>
-                    )}
-
-                    {member.kkUrl ? (
-                      <button
-                        onClick={() => onViewDoc(`KK - ${member.nama}`, member.kkUrl, member.kkName)}
-                        className="text-emerald-700 hover:text-emerald-800 font-medium inline-flex items-center gap-1 underline cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>KK terlampir</span>
-                      </button>
-                    ) : (
-                      <span className="text-red-500 font-medium">KK kosong</span>
-                    )}
-
-                    {member.status === 'ditolak' && member.catatanPenolakan && (
-                      <span className="text-rose-700 italic">
-                        Alasan: {member.catatanPenolakan}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Action Buttons Row */}
-                  <div className="mt-3.5 pt-2 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
-                    {/* Approve / Reject Buttons (Especially for Menunggu or status change) */}
-                    <div className="flex items-center gap-1.5">
-                      {member.status !== 'disetujui' && (
-                        <button
-                          onClick={() => onApprove(member.id)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
-                          title="Setujui pendaftaran dan aktifkan kartu anggota"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Setujui</span>
-                        </button>
-                      )}
-
-                      {member.status !== 'ditolak' && (
-                        <button
-                          onClick={() => {
-                            setRejectingMember(member);
-                            setRejectReason('');
-                          }}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-all cursor-pointer"
-                          title="Tolak pendaftaran dengan catatan"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>Tolak</span>
-                        </button>
-                      )}
-
-                      {/* Kartu Preview Button */}
-                      {member.status === 'disetujui' && (
-                        <button
-                          onClick={() => onViewCard(member)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-[#83141a] text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-200/60"
-                          title="Lihat / Cetak Kartu Anggota"
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          <span>Kartu</span>
-                        </button>
+                  <div className="flex items-start gap-3">
+                    {/* Foto Diri */}
+                    <div className="w-13 h-17 rounded-lg overflow-hidden bg-emerald-50 border border-[#0b5d34] shrink-0">
+                      {member.fotoUrl ? (
+                        <img
+                          src={member.fotoUrl}
+                          alt={member.nama}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-xs">
+                          AI
+                        </div>
                       )}
                     </div>
 
-                    {/* Secondary Actions: WA, Edit, Hapus */}
-                    <div className="flex items-center gap-1.5">
-                      {/* WhatsApp Button */}
-                      <button
-                        onClick={() => handleOpenWhatsApp(member)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-                        title="Kirim pesan status via WhatsApp"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>WA</span>
-                      </button>
+                    <div className="flex-1 min-w-0">
+                      {/* Name & Status */}
+                      <div className="flex items-start justify-between gap-1.5">
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#0b5d34] border border-emerald-200 uppercase">
+                              {roleText}
+                            </span>
+                            <span className="text-xs text-gray-400 font-mono">ID: {member.id}</span>
+                          </div>
+                          <h3 className="text-base font-bold text-gray-900 mt-0.5 leading-snug">
+                            {member.nama}
+                          </h3>
+                        </div>
 
-                      {/* Edit Button */}
-                      <button
-                        onClick={() => onEditMember(member)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-                        title="Edit data anggota"
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Edit</span>
-                      </button>
+                        {member.status === 'disetujui' && (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200 shrink-0">
+                            Disetujui
+                          </span>
+                        )}
+                        {member.status === 'menunggu' && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 text-[11px] font-bold border border-amber-200 shrink-0 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Menunggu
+                          </span>
+                        )}
+                        {member.status === 'ditolak' && (
+                          <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-800 text-[11px] font-bold border border-rose-200 shrink-0">
+                            Ditolak
+                          </span>
+                        )}
+                      </div>
 
-                      {/* Hapus Button */}
-                      <button
-                        onClick={() => onDeleteMember(member.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-red-50 border border-gray-200 text-gray-600 hover:text-red-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-                        title="Hapus data anggota"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus</span>
-                      </button>
+                      {/* NIK & No KK */}
+                      <div className="mt-1 text-xs text-gray-600 font-mono space-y-0.5">
+                        <div>
+                          <span className="text-gray-400">NIK:</span> <strong className="text-gray-800">{member.nik}</strong>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">No. KK:</span> <strong>{member.noKk}</strong>
+                          {member.namaKepalaKeluarga && (
+                            <span className="text-gray-500 font-sans ml-1 text-[11px]">
+                              (Kepala: {member.namaKepalaKeluarga})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Alamat & Telp */}
+                      <div className="text-xs text-gray-700 mt-1 leading-relaxed">
+                        {member.alamat}
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono mt-0.5">
+                        HP: {member.noHp}
+                      </div>
+
+                      {/* Documents */}
+                      <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap items-center gap-3 text-xs">
+                        {member.fotoUrl && (
+                          <button
+                            onClick={() => onViewDoc(`Foto Diri - ${member.nama}`, member.fotoUrl, member.fotoName)}
+                            className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>Foto Diri</span>
+                          </button>
+                        )}
+                        {member.ktpUrl ? (
+                          <button
+                            onClick={() => onViewDoc(`KTP - ${member.nama}`, member.ktpUrl, member.ktpName)}
+                            className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>KTP</span>
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">KTP (-)</span>
+                        )}
+                        {member.kkUrl ? (
+                          <button
+                            onClick={() => onViewDoc(`KK - ${member.nama}`, member.kkUrl, member.kkName)}
+                            className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>KK</span>
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">KK (-)</span>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="mt-3 pt-2 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                        {/* Approval actions */}
+                        <div className="flex items-center gap-1.5">
+                          {member.status !== 'disetujui' && (
+                            <button
+                              onClick={() => onApprove(member.id)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs"
+                              title="Setujui dan aktifkan kartu anggota"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Setujui</span>
+                            </button>
+                          )}
+
+                          {member.status !== 'ditolak' && (
+                            <button
+                              onClick={() => {
+                                setRejectingMember(member);
+                                setRejectReason('');
+                              }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl cursor-pointer"
+                              title="Tolak pendaftaran dengan catatan"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Tolak</span>
+                            </button>
+                          )}
+
+                          {member.status === 'disetujui' && (
+                            <button
+                              onClick={() => onViewCard(member)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#0b5d34] border border-emerald-200 text-xs font-bold rounded-xl cursor-pointer"
+                              title="Lihat / Cetak Kartu Anggota"
+                            >
+                              <CreditCard className="w-3.5 h-3.5" />
+                              <span>Kartu</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Admin modify actions */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenWhatsApp(member)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-xs font-bold rounded-xl cursor-pointer"
+                            title="Kirim pesan WhatsApp"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>WA</span>
+                          </button>
+
+                          <button
+                            onClick={() => onEditMember(member)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-800 text-xs font-bold rounded-xl cursor-pointer"
+                            title="Edit data anggota ini"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            onClick={() => onDeleteMember(member.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 hover:bg-rose-50 border border-gray-200 text-gray-600 hover:text-rose-700 text-xs font-bold rounded-xl cursor-pointer"
+                            title="Hapus data"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -469,29 +515,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           ) : (
             <div className="bg-white rounded-2xl p-8 text-center border border-gray-100 shadow-xs">
               <Search className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-              <h4 className="text-sm font-bold text-gray-800">Tidak ada data ditemukan</h4>
+              <h4 className="text-sm font-bold text-gray-800">Tidak ada data anggota ditemukan</h4>
               <p className="text-xs text-gray-500 mt-1">
-                Ubah filter status atau kata kunci pencarian.
+                Silakan ubah filter pencarian atau status.
               </p>
             </div>
           )}
         </div>
 
-        {/* Quick Demo Reset Helper */}
-        <div className="mt-8 pt-4 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500">
-          <span>Mode Admin Yayasan Al Ikhlas Sembilan Satu</span>
-          <button
-            onClick={onResetData}
-            className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
-            title="Kembalikan data ke contoh awal untuk demo"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Data Demo</span>
-          </button>
+        {/* Admin Footer */}
+        <div className="mt-8 pt-4 border-t border-gray-200 text-center text-xs text-gray-500">
+          <span>Sistem Administrasi Resmi Yayasan Al Ikhlas Sembilan Satu (NU)</span>
         </div>
       </div>
 
-      {/* Rejection Note Modal */}
+      {/* Rejection Modal */}
       {rejectingMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
@@ -499,13 +537,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               Tolak Pendaftaran
             </h3>
             <p className="text-xs text-gray-600 mt-1">
-              Masukkan alasan penolakan untuk <strong>{rejectingMember.nama}</strong>:
+              Alasan penolakan untuk <strong>{rejectingMember.nama}</strong>:
             </p>
             <textarea
               rows={3}
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Contoh: Lampiran KTP tidak terbaca / Wilayah domisili di luar jangkauan."
+              placeholder="Contoh: Nomor NIK tidak sesuai / Foto diri kurang jelas."
               className="w-full mt-3 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-200 resize-none"
               autoFocus
             />
@@ -515,7 +553,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onReject(rejectingMember.id, rejectReason);
                   setRejectingMember(null);
                 }}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl cursor-pointer"
+                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer"
               >
                 Tolak Sekarang
               </button>
@@ -530,43 +568,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       )}
 
-      {/* Admin Bottom Navigation Dock matching screenshots */}
+      {/* Admin Bottom Navigation Dock */}
       <div className="fixed bottom-4 inset-x-0 z-40 flex justify-center px-4">
         <div className="bg-white/95 backdrop-blur-md border border-gray-200/90 shadow-xl rounded-full px-5 py-2.5 flex items-center gap-6 sm:gap-8">
-          {/* Data */}
           <button
             onClick={() => setStatusFilter('semua')}
-            className="flex flex-col items-center text-gray-700 hover:text-[#83141a] transition-colors cursor-pointer"
+            className="flex flex-col items-center text-gray-700 hover:text-[#0b5d34] transition-colors cursor-pointer"
           >
-            <FileText className="w-5 h-5 text-emerald-600" />
-            <span className="text-[11px] font-semibold mt-0.5">Data</span>
+            <FileText className="w-5 h-5 text-[#0b5d34]" />
+            <span className="text-[11px] font-bold mt-0.5">Data</span>
           </button>
 
-          {/* Tambah */}
           <button
             onClick={onAddMember}
-            className="flex flex-col items-center text-gray-700 hover:text-[#83141a] transition-colors cursor-pointer"
+            className="flex flex-col items-center text-gray-700 hover:text-[#0b5d34] transition-colors cursor-pointer"
           >
             <Plus className="w-5 h-5 text-gray-800" />
-            <span className="text-[11px] font-semibold mt-0.5">Tambah</span>
+            <span className="text-[11px] font-bold mt-0.5">Tambah</span>
           </button>
 
-          {/* Ekspor */}
           <button
             onClick={handleExportCSV}
-            className="flex flex-col items-center text-gray-700 hover:text-[#83141a] transition-colors cursor-pointer"
+            className="flex flex-col items-center text-gray-700 hover:text-[#0b5d34] transition-colors cursor-pointer"
           >
             <Download className="w-5 h-5 text-blue-600" />
-            <span className="text-[11px] font-semibold mt-0.5">Ekspor</span>
+            <span className="text-[11px] font-bold mt-0.5">Ekspor</span>
           </button>
 
-          {/* Keluar */}
           <button
             onClick={onLogout}
             className="flex flex-col items-center text-gray-700 hover:text-red-700 transition-colors cursor-pointer"
           >
             <LogOut className="w-5 h-5 text-amber-700" />
-            <span className="text-[11px] font-semibold mt-0.5">Keluar</span>
+            <span className="text-[11px] font-bold mt-0.5">Keluar</span>
           </button>
         </div>
       </div>
