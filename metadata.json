@@ -1,0 +1,6 @@
+{
+  "name": "Yayasan Al Ikhlas Sembilan Satu",
+  "description": "Sistem Informasi & Manajemen Anggota Yayasan Al Ikhlas Sembilan Satu - Pendaftaran, Verifikasi Kartu Anggota, Approval Admin, dan Notifikasi Real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
