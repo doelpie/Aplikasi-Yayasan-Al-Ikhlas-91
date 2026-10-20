@@ -1,0 +1,178 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "Anggota Yayasan Al Ikhlas Sembilan Satu",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik anggota",
+          "maxLength": 64
+        },
+        "regNumber": {
+          "type": "string",
+          "description": "Nomor Registrasi Anggota",
+          "maxLength": 100
+        },
+        "nik": {
+          "type": "string",
+          "description": "Nomor KTP atau KIA (16 digit)",
+          "maxLength": 30
+        },
+        "nama": {
+          "type": "string",
+          "description": "Nama Lengkap Sesuai KTP",
+          "maxLength": 150
+        },
+        "alamat": {
+          "type": "string",
+          "description": "Alamat Tempat Tinggal Lengkap",
+          "maxLength": 500
+        },
+        "noHp": {
+          "type": "string",
+          "description": "Nomor WhatsApp atau Telepon",
+          "maxLength": 30
+        },
+        "noKk": {
+          "type": "string",
+          "description": "Nomor Kartu Keluarga",
+          "maxLength": 30
+        },
+        "peranKeluarga": {
+          "type": "string",
+          "enum": ["kepala_keluarga", "istri", "anak"],
+          "description": "Status dalam keluarga"
+        },
+        "kepalaKeluargaId": {
+          "type": "string",
+          "description": "ID Kepala Keluarga terkait jika istri atau anak",
+          "maxLength": 64
+        },
+        "namaKepalaKeluarga": {
+          "type": "string",
+          "description": "Nama Kepala Keluarga",
+          "maxLength": 150
+        },
+        "tempatTanggalLahir": {
+          "type": "string",
+          "description": "Tempat dan Tanggal Lahir",
+          "maxLength": 150
+        },
+        "jumlahKeluarga": {
+          "type": "number",
+          "description": "Jumlah jiwa dalam keluarga"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email anggota",
+          "maxLength": 150
+        },
+        "fotoUrl": {
+          "type": "string",
+          "description": "URL foto diri profil berbusana rapi dan syar'i",
+          "maxLength": 500000
+        },
+        "fotoName": {
+          "type": "string",
+          "description": "Nama file foto",
+          "maxLength": 150
+        },
+        "ktpUrl": {
+          "type": "string",
+          "description": "URL lampiran foto/dokumen KTP",
+          "maxLength": 500000
+        },
+        "ktpName": {
+          "type": "string",
+          "description": "Nama file KTP",
+          "maxLength": 150
+        },
+        "kkUrl": {
+          "type": "string",
+          "description": "URL lampiran foto/dokumen KK",
+          "maxLength": 500000
+        },
+        "kkName": {
+          "type": "string",
+          "description": "Nama file KK",
+          "maxLength": 150
+        },
+        "status": {
+          "type": "string",
+          "enum": ["menunggu", "disetujui", "ditolak"],
+          "description": "Status persetujuan admin"
+        },
+        "catatanPenolakan": {
+          "type": "string",
+          "description": "Alasan penolakan jika pendaftaran ditolak",
+          "maxLength": 500
+        },
+        "tanggalDaftar": {
+          "type": "string",
+          "description": "Tanggal pendaftaran format ISO",
+          "maxLength": 50
+        },
+        "tanggalDisetujui": {
+          "type": "string",
+          "description": "Tanggal disetujui format ISO",
+          "maxLength": 50
+        }
+      },
+      "required": ["id", "nik", "nama", "alamat", "noHp", "noKk", "peranKeluarga", "status", "tanggalDaftar"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Notifikasi Real-time perubahan status dan aktivitas anggota",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik notifikasi",
+          "maxLength": 64
+        },
+        "memberId": {
+          "type": "string",
+          "description": "ID anggota yang bersangkutan",
+          "maxLength": 64
+        },
+        "memberName": {
+          "type": "string",
+          "description": "Nama anggota terkait",
+          "maxLength": 150
+        },
+        "type": {
+          "type": "string",
+          "enum": ["status_approved", "status_rejected", "new_registration", "data_updated"],
+          "description": "Tipe kejadian notifikasi"
+        },
+        "message": {
+          "type": "string",
+          "description": "Pesan notifikasi",
+          "maxLength": 500
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Waktu notifikasi format ISO",
+          "maxLength": 50
+        },
+        "read": {
+          "type": "boolean",
+          "description": "Status sudah dibaca"
+        }
+      },
+      "required": ["id", "memberId", "memberName", "type", "message", "timestamp", "read"]
+    }
+  },
+  "firestore": {
+    "/members/{memberId}": {
+      "schema": "Member",
+      "description": "Koleksi data anggota Yayasan Al Ikhlas Sembilan Satu"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Koleksi notifikasi real-time sistem"
+    }
+  }
+}

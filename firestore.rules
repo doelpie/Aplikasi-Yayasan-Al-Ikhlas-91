@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidMember(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+             data.nik is string && data.nik.size() > 0 && data.nik.size() <= 30 &&
+             data.nama is string && data.nama.size() > 0 && data.nama.size() <= 150 &&
+             data.alamat is string && data.alamat.size() > 0 && data.alamat.size() <= 500 &&
+             data.noHp is string && data.noHp.size() > 0 && data.noHp.size() <= 30 &&
+             data.noKk is string && data.noKk.size() > 0 && data.noKk.size() <= 30 &&
+             data.peranKeluarga in ['kepala_keluarga', 'istri', 'anak'] &&
+             data.status in ['menunggu', 'disetujui', 'ditolak'] &&
+             data.tanggalDaftar is string && data.tanggalDaftar.size() <= 50;
+    }
+
+    function isValidNotification(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+             data.memberId is string && data.memberId.size() <= 64 &&
+             data.memberName is string && data.memberName.size() <= 150 &&
+             data.type in ['status_approved', 'status_rejected', 'new_registration', 'data_updated'] &&
+             data.message is string && data.message.size() <= 500 &&
+             data.timestamp is string && data.timestamp.size() <= 50 &&
+             data.read is bool;
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection ping check
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Koleksi Anggota Yayasan
+    match /members/{memberId} {
+      allow get: if isValidId(memberId);
+      allow list: if true;
+      allow create: if isValidId(memberId) && isValidMember(incoming());
+      allow update: if isValidId(memberId) && isValidMember(incoming());
+      allow delete: if isValidId(memberId);
+    }
+
+    // Koleksi Notifikasi Real-time
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId);
+      allow list: if true;
+      allow create: if isValidId(notificationId) && isValidNotification(incoming());
+      allow update: if isValidId(notificationId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']) && incoming().read is bool;
+      allow delete: if isValidId(notificationId);
+    }
+  }
+}

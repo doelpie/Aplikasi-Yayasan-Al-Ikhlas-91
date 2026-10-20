@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Member } from '../types';
 import { formatIndonesianDate, getPeranLabel, maskNik } from '../utils/storage';
-import { Search, MapPin, Phone, Mail, Clock, CheckCircle2, XCircle, AlertTriangle, CreditCard, Shield, HelpCircle, Lock } from 'lucide-react';
+import { Search, MapPin, Phone, Mail, Clock, CheckCircle2, XCircle, AlertTriangle, CreditCard, Shield, HelpCircle, Lock, Database } from 'lucide-react';
 
 interface InfoSectionProps {
   members: Member[];
@@ -147,6 +147,37 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
         )}
       </div>
 
+      {/* Informasi Penyimpanan Database Firebase */}
+      <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-emerald-100 text-[#0b5d34] flex items-center justify-center font-bold">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-gray-900 leading-tight">
+                Database Cloud Firebase
+              </h2>
+              <p className="text-xs text-gray-500">Google Cloud Firestore Enterprise</p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-[#0b5d34] border border-emerald-200 text-xs font-bold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Terhubung & Aktif
+          </span>
+        </div>
+        <div className="p-3.5 bg-emerald-50/50 rounded-2xl border border-emerald-200/70 text-xs text-emerald-950 space-y-1.5">
+          <p className="font-semibold text-emerald-900">
+            Seluruh data anggota, pendaftaran baru, dan status verifikasi kini tersimpan secara permanen di database Firebase Firestore.
+          </p>
+          <ul className="list-disc list-inside text-[11px] text-emerald-800 space-y-0.5">
+            <li>Sinkronisasi instan real-time lintas perangkat dan browser</li>
+            <li>Keamanan aturan akses (Firestore Security Rules) terverifikasi</li>
+            <li>Cadangan data awan terpusat & tidak hilang saat cache dibersihkan</li>
+          </ul>
+        </div>
+      </div>
+
       {/* Privasi & Keamanan Kartu */}
       <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
         <div className="flex items-center gap-2.5">
@@ -177,7 +208,7 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
             <HelpCircle className="w-5 h-5" />
           </div>
           <h2 className="text-base font-bold text-gray-900">
-            Sekretariat Yayasan Al Ikhlas (NU)
+            Sekretariat Yayasan Al Ikhlas Sembilan Satu
           </h2>
         </div>
 

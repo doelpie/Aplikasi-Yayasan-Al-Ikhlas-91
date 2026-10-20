@@ -1,8 +1,13 @@
 import { Member, AppNotification, BroadcastMessage, MemberStatus, FamilyRole } from '../types';
 import { INITIAL_MEMBERS } from '../data/initialData';
 import { soundEffects } from './sound';
-
 import { SYARI_PHOTOS } from '../data/initialData';
+import { 
+  saveMemberToFirestore, 
+  deleteMemberFromFirestore, 
+  addNotificationToFirestore, 
+  markAllNotificationsAsReadInFirestore 
+} from '../firebase';
 
 const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
 const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
@@ -124,12 +129,23 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
   };
   const updated = [newNotif, ...all.slice(0, 49)];
   saveNotifications(updated);
+  
+  // Persist to Firebase Firestore
+  addNotificationToFirestore(newNotif).catch(err => {
+    console.warn('Firestore notification sync note:', err);
+  });
+
   return newNotif;
 }
 
 export function markAllNotificationsAsRead(): void {
   const all = getStoredNotifications().map(n => ({ ...n, read: true }));
   saveNotifications(all);
+  
+  // Persist read state to Firebase Firestore
+  markAllNotificationsAsReadInFirestore(all).catch(err => {
+    console.warn('Firestore notification mark read note:', err);
+  });
 }
 
 export function requestNotificationPermission(): void {
@@ -236,6 +252,11 @@ export function updateMemberStatus(
   members[index] = updatedMember;
   saveMembers(members);
 
+  // Persist update to Firebase Firestore
+  saveMemberToFirestore(updatedMember).catch(err => {
+    console.warn('Firestore member status sync note:', err);
+  });
+
   if (newStatus === 'disetujui') {
     soundEffects.playSuccess();
   } else if (newStatus === 'ditolak') {
@@ -305,6 +326,11 @@ export function addNewMember(
   const updated = [newMember, ...members];
   saveMembers(updated);
 
+  // Persist to Firebase Firestore
+  saveMemberToFirestore(newMember).catch(err => {
+    console.warn('Firestore add member sync note:', err);
+  });
+
   soundEffects.playPing();
 
   const roleText = getPeranLabel(newMember.peranKeluarga);
@@ -335,6 +361,11 @@ export function updateMember(updatedMember: Member): void {
     members[index] = updatedMember;
     saveMembers(members);
 
+    // Persist to Firebase Firestore
+    saveMemberToFirestore(updatedMember).catch(err => {
+      console.warn('Firestore update member sync note:', err);
+    });
+
     // If session matches updated member, sync session
     const currentSession = getCurrentUserSession();
     if (currentSession && currentSession.id === updatedMember.id) {
@@ -352,12 +383,23 @@ export function deleteMember(id: string): void {
   const members = getStoredMembers();
   const filtered = members.filter(m => m.id !== id);
   saveMembers(filtered);
+
+  // Delete from Firebase Firestore
+  deleteMemberFromFirestore(id).catch(err => {
+    console.warn('Firestore delete member sync note:', err);
+  });
 }
 
 export function resetToInitialData(): void {
   saveMembers(INITIAL_MEMBERS);
   saveNotifications([]);
   setCurrentUserSession(null);
+
+  // Reseed Firebase Firestore
+  INITIAL_MEMBERS.forEach(m => {
+    saveMemberToFirestore(m).catch(console.warn);
+  });
+
   if (typeof window !== 'undefined') {
     window.location.reload();
   }

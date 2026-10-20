@@ -163,9 +163,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               AI
             </div>
             <div>
-              <h1 className="text-lg sm:text-xl font-black tracking-wider uppercase leading-none">
-                ADMIN ANGGOTA & KELUARGA
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-xl font-black tracking-wider uppercase leading-none">
+                  ADMIN ANGGOTA & KELUARGA
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-800/80 border border-emerald-400/30 text-[10px] text-emerald-200 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Firebase DB
+                </span>
+              </div>
               <p className="text-xs text-emerald-200 mt-1 font-medium">
                 Yayasan Al Ikhlas Sembilan Satu (NU)
               </p>

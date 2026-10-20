@@ -4,6 +4,7 @@ import {
   getStoredMembers, 
   saveMembers, 
   getStoredNotifications, 
+  saveNotifications,
   markAllNotificationsAsRead, 
   subscribeToRealtimeEvents, 
   updateMemberStatus, 
@@ -28,6 +29,11 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { AdminMemberForm } from './components/AdminMemberForm';
 import { DocumentViewerModal } from './components/DocumentViewerModal';
 import { NotificationToast } from './components/NotificationToast';
+import { 
+  subscribeMembersFirestore, 
+  subscribeNotificationsFirestore, 
+  seedInitialDataIfEmpty 
+} from './firebase';
 import { Users, FilePenLine, Info, Shield, User } from 'lucide-react';
 
 export default function App() {
@@ -89,7 +95,35 @@ export default function App() {
   useEffect(() => {
     requestNotificationPermission();
 
-    const unsubscribe = subscribeToRealtimeEvents(handleRealtimeMessage);
+    // 1. Initial seed check for Firebase Firestore
+    seedInitialDataIfEmpty().catch(err => console.warn('Firestore seed note:', err));
+
+    // 2. Real-time subscription to Firebase Firestore Members
+    const unsubMembers = subscribeMembersFirestore((remoteMembers) => {
+      if (remoteMembers && remoteMembers.length > 0) {
+        setMembers(remoteMembers);
+        saveMembers(remoteMembers);
+
+        if (currentUserSession) {
+          const freshUser = remoteMembers.find(m => m.id === currentUserSession.id);
+          if (freshUser) {
+            setSessionMember(freshUser);
+            setCurrentUserSession(freshUser);
+          }
+        }
+      }
+    });
+
+    // 3. Real-time subscription to Firebase Firestore Notifications
+    const unsubNotifs = subscribeNotificationsFirestore((remoteNotifs) => {
+      if (remoteNotifs && remoteNotifs.length > 0) {
+        setNotifications(remoteNotifs);
+        saveNotifications(remoteNotifs);
+      }
+    });
+
+    // 4. Local BroadcastChannel & Storage Event fallback for instant tab syncing
+    const unsubscribeBroadcast = subscribeToRealtimeEvents(handleRealtimeMessage);
 
     const onStorageChange = (e: StorageEvent) => {
       if (e.key?.includes('yayasan_alikhlas')) {
@@ -103,10 +137,12 @@ export default function App() {
     window.addEventListener('storage', onStorageChange);
 
     return () => {
-      unsubscribe();
+      unsubMembers();
+      unsubNotifs();
+      unsubscribeBroadcast();
       window.removeEventListener('storage', onStorageChange);
     };
-  }, [handleRealtimeMessage]);
+  }, [handleRealtimeMessage, currentUserSession]);
 
   // Auto-dismiss notification toast after 6 seconds
   useEffect(() => {
