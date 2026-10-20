@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Member } from '../types';
 import { ShieldCheck, AlertCircle, X, KeyRound } from 'lucide-react';
-import { verifyMemberPin, getPeranLabel } from '../utils/storage';
+import { verifyMemberPin, getPeranLabel, maskNik, maskKk } from '../utils/storage';
 
 interface VerifyCardModalProps {
   member: Member;
@@ -86,6 +86,9 @@ export const VerifyCardModal: React.FC<VerifyCardModalProps> = ({
               </div>
               <div className="text-xs text-gray-600 truncate mt-0.5">
                 {member.alamat}
+              </div>
+              <div className="text-[11px] text-gray-500 font-mono mt-1">
+                NIK: {maskNik(member.nik)} · No. KK: {maskKk(member.noKk)}
               </div>
             </div>
           </div>

@@ -136,7 +136,7 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   currentY += 22;
   ctx.fillStyle = '#0b5d34';
   ctx.font = 'bold 18px monospace';
-  ctx.fillText(maskNik(member.nik), contentX, currentY);
+  ctx.fillText(member.nik, contentX, currentY);
 
   // 4. No. Kartu Keluarga (KK)
   currentY += 32;

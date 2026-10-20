@@ -366,7 +366,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             Tambah Anggota
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Formulir Pendaftaran Yayasan Al Ikhlas Sembilan Satu (NU)
+            Formulir Pendaftaran Yayasan Al Ikhlas Sembilan Satu
           </p>
         </div>
 

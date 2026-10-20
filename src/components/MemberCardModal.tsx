@@ -58,7 +58,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
         <div className="flex items-center justify-between px-5 py-3.5 bg-stone-900 text-white print:hidden">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-emerald-400" />
-            <span className="text-sm font-semibold">Kartu Anggota Resmi Yayasan Al Ikhlas (NU)</span>
+            <span className="text-sm font-semibold">Kartu Anggota Resmi Yayasan Al Ikhlas Sembilan Satu</span>
           </div>
           <button
             onClick={onClose}
@@ -143,7 +143,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                       {idDocType}
                     </div>
                     <div className="text-xs sm:text-sm font-bold font-mono text-[#0b5d34] mt-0.5">
-                      {maskNik(member.nik)}
+                      {member.nik}
                     </div>
                   </div>
 

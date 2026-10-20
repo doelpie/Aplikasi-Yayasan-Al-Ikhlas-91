@@ -100,7 +100,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const roleText = getPeranLabel(member.peranKeluarga);
     let message = '';
     if (member.status === 'disetujui') {
-      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nAlhamdulillah, pendaftaran keanggotaan Anda sebagai *${roleText}* di *Yayasan Al Ikhlas Sembilan Satu (NU)* telah *DISETUJUI*.\nID Anggota: *${member.id}*\nNo. KK: *${member.noKk}*\n\nAnda dapat membuka dan mengunduh Kartu Anggota Resmi dengan memasukkan 6 digit terakhir nomor KTP/KIA Anda.\n\nTerima kasih atas partisipasi Anda.`;
+      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nAlhamdulillah, pendaftaran keanggotaan Anda sebagai *${roleText}* di *Yayasan Al Ikhlas Sembilan Satu* telah *DISETUJUI*.\nID Anggota: *${member.id}*\nNo. KK: *${member.noKk}*\n\nAnda dapat membuka dan mengunduh Kartu Anggota Resmi dengan memasukkan 6 digit terakhir nomor KTP/KIA Anda.\n\nTerima kasih atas partisipasi Anda.`;
     } else if (member.status === 'ditolak') {
       message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nMohon maaf, pendaftaran keanggotaan Anda di *Yayasan Al Ikhlas Sembilan Satu* belum dapat disetujui.\n*Catatan*: ${member.catatanPenolakan || 'Data administrasi belum lengkap'}.\n\nSilakan hubungi pengurus untuk perbaikan data. Terima kasih.`;
     } else {
@@ -173,7 +173,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </span>
               </div>
               <p className="text-xs text-emerald-200 mt-1 font-medium">
-                Yayasan Al Ikhlas Sembilan Satu (NU)
+                Yayasan Al Ikhlas Sembilan Satu
               </p>
             </div>
           </div>
@@ -531,7 +531,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Admin Footer */}
         <div className="mt-8 pt-4 border-t border-gray-200 text-center text-xs text-gray-500">
-          <span>Sistem Administrasi Resmi Yayasan Al Ikhlas Sembilan Satu (NU)</span>
+          <span>Sistem Administrasi Resmi Yayasan Al Ikhlas Sembilan Satu</span>
         </div>
       </div>
 

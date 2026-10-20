@@ -436,6 +436,15 @@ export function maskNik(nik: string): string {
   return `${prefix}••••••${suffix}`;
 }
 
+export function maskKk(kk?: string): string {
+  if (!kk) return '••••••••••••••••';
+  const clean = kk.replace(/\D/g, '');
+  if (clean.length <= 6) return '••••••••••••••••';
+  const prefix = clean.slice(0, 6);
+  const suffix = clean.slice(-4);
+  return `${prefix}••••••${suffix}`;
+}
+
 export function maskPhoneNumber(phone: string): string {
   if (!phone) return '••••••••••••';
   const clean = phone.replace(/\D/g, '');

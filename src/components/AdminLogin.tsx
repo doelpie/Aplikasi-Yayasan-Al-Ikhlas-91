@@ -39,7 +39,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
             ADMIN ANGGOTA
           </h1>
           <p className="text-xs text-emerald-200 mt-1 font-medium">
-            Yayasan Al Ikhlas Sembilan Satu (NU)
+            Yayasan Al Ikhlas Sembilan Satu
           </p>
         </div>
       </div>

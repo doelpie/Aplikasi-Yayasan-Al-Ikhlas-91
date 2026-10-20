@@ -243,9 +243,14 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
               <h2 className="text-lg font-bold text-gray-900 leading-snug mt-1 truncate">
                 {currentUserSession.nama}
               </h2>
-              <p className="text-xs text-gray-500 font-mono mt-0.5">
-                No. KK: {currentUserSession.noKk}
-              </p>
+              <div className="text-xs font-mono mt-1 space-y-0.5">
+                <div className="text-gray-700">
+                  <span className="text-gray-500 font-sans text-[11px]">No. KTP/NIK:</span> <strong className="text-[#0b5d34]">{currentUserSession.nik}</strong>
+                </div>
+                <div className="text-gray-700">
+                  <span className="text-gray-500 font-sans text-[11px]">No. KK:</span> <strong className="text-gray-800">{currentUserSession.noKk}</strong>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -441,9 +446,14 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                       <h4 className="text-sm font-bold text-gray-900 mt-1 truncate">
                         {member.nama}
                       </h4>
-                      <p className="text-[11px] text-gray-500 font-mono">
-                        NIK: {maskNik(member.nik)}
-                      </p>
+                      <div className="text-[11px] font-mono mt-0.5 space-y-0.5">
+                        <div className="text-gray-700">
+                          <span className="text-gray-500 font-sans">NIK:</span> <strong className="text-[#0b5d34]">{member.nik}</strong>
+                        </div>
+                        <div className="text-gray-700">
+                          <span className="text-gray-500 font-sans">No. KK:</span> <strong className="text-gray-800">{member.noKk}</strong>
+                        </div>
+                      </div>
 
                       {/* Action buttons for this family member */}
                       <div className="mt-2.5 flex items-center gap-2">

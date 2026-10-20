@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Member } from '../types';
-import { getInitials, getPeranLabel, maskNik } from '../utils/storage';
+import { getInitials, getPeranLabel, maskNik, maskKk } from '../utils/storage';
 import { Search, CreditCard, ChevronDown, Users, Sparkles, User } from 'lucide-react';
 
 interface MemberListProps {
@@ -154,7 +154,7 @@ export const MemberList: React.FC<MemberListProps> = ({
                   </p>
 
                   <div className="text-[11px] text-gray-500 font-mono mt-0.5">
-                    NIK: {maskNik(member.nik)} · No. KK: {member.noKk}
+                    NIK: {maskNik(member.nik)} · No. KK: {maskKk(member.noKk)}
                   </div>
 
                   {/* Actions Row */}
