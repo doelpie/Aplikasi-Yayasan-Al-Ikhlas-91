@@ -7,7 +7,8 @@ import {
   maskPhoneNumber, 
   formatIndonesianDate, 
   verifyMemberPin,
-  getLast6DigitsNik 
+  getLast6DigitsNik,
+  getInitials
 } from '../utils/storage';
 import { 
   User, 
@@ -140,8 +141,8 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
   // If NOT logged in, show Login Form
   if (!currentUserSession) {
     return (
-      <div className="max-w-xl mx-auto px-4 sm:px-6 pt-3 pb-28">
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xs border border-gray-100">
+      <div className="max-w-xl md:max-w-2xl mx-auto px-3 sm:px-6 pt-3 pb-28">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-xs border border-gray-100">
           <div className="flex items-center gap-3 pb-4 border-b border-gray-100">
             <div className="w-10 h-10 rounded-full bg-emerald-100 text-[#0b5d34] flex items-center justify-center font-bold">
               <Lock className="w-5 h-5" />
@@ -215,9 +216,9 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
   const familyMembers = isHeadOfFamily ? getFamilyMembers(currentUserSession, allMembers) : [currentUserSession];
 
   return (
-    <div className="max-w-xl mx-auto px-4 sm:px-6 pt-2 pb-28 space-y-4">
+    <div className="max-w-xl md:max-w-3xl lg:max-w-4xl mx-auto px-3 sm:px-6 pt-2 pb-28 space-y-4">
       {/* Profile Card Header */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-xs border border-gray-100">
+      <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-xs border border-gray-100">
         <div className="flex items-start justify-between gap-3 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3.5">
             {/* Foto Diri */}
@@ -230,7 +231,7 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-lg">
-                  AI
+                  {getInitials(currentUserSession.nama)}
                 </div>
               )}
             </div>
@@ -404,7 +405,7 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
             </button>
           </div>
 
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {familyMembers.map((member) => {
               const isSelf = member.id === currentUserSession.id;
               const subRole = getPeranLabel(member.peranKeluarga);
@@ -426,7 +427,7 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-xs">
-                          AI
+                          {getInitials(member.nama)}
                         </div>
                       )}
                     </div>

@@ -19,7 +19,7 @@ import {
   Users,
   Camera
 } from 'lucide-react';
-import { getPeranLabel, maskNik } from '../utils/storage';
+import { getPeranLabel, maskNik, getInitials } from '../utils/storage';
 
 interface AdminDashboardProps {
   members: Member[];
@@ -102,7 +102,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (member.status === 'disetujui') {
       message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nAlhamdulillah, pendaftaran keanggotaan Anda sebagai *${roleText}* di *Yayasan Al Ikhlas Sembilan Satu* telah *DISETUJUI*.\nID Anggota: *${member.id}*\nNo. KK: *${member.noKk}*\n\nAnda dapat membuka dan mengunduh Kartu Anggota Resmi dengan memasukkan 6 digit terakhir nomor KTP/KIA Anda.\n\nTerima kasih atas partisipasi Anda.`;
     } else if (member.status === 'ditolak') {
-      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nMohon maaf, pendaftaran keanggotaan Anda di *Yayasan Al Ikhlas Sembilan Satu* belum dapat disetujui.\n*Catatan*: ${member.catatanPenolakan || 'Data administrasi belum lengkap'}.\n\nSilakan hubungi pengurus untuk perbaikan data. Terima kasih.`;
+      message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nMohon maaf, pendaftaran keanggotaan Anda di *Yayasan Al Ikhlas Sembilan Satu* belum dapat disetujui.\n*Catatan*: ${member.catatanPenolakan || 'Data administrasi belum lengkap'}.\n\nSilakan hubungi pengurus untuk perbaikan data via WhatsApp: 08123986794. Terima kasih.`;
     } else {
       message = `Assalamu'alaikum Bpk/Ibu *${member.nama}*,\n\nKami dari Pengurus *Yayasan Al Ikhlas Sembilan Satu* sedang memverifikasi berkas pendaftaran Anda sebagai *${roleText}*. Mohon ditunggu informasi selanjutnya. Terima kasih.`;
     }
@@ -147,7 +147,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Data_Anggota_Yayasan_Al_Ikhlas_NU_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `Data_Anggota_Yayasan_Al_Ikhlas_Sembilan_Satu_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -156,15 +156,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   return (
     <div className="min-h-screen bg-[#f4f8f5] pb-28">
       {/* Hijau NU Header */}
-      <div className="bg-[#0b5d34] text-white pt-5 pb-10 px-4 sm:px-6 shadow-md">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-full bg-white text-[#0b5d34] flex items-center justify-center font-black text-lg shadow-sm border-2 border-amber-300">
-              AI
-            </div>
-            <div>
+      <div className="bg-[#0b5d34] text-white pt-5 pb-10 px-3 sm:px-6 shadow-md">
+        <div className="max-w-5xl lg:max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <img 
+              src="/logo.png" 
+              alt="Logo Yayasan Al Ikhlas" 
+              className="w-10 h-10 sm:w-11 sm:h-11 object-contain drop-shadow-sm shrink-0" 
+            />
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-lg sm:text-xl font-black tracking-wider uppercase leading-none">
+                <h1 className="text-sm sm:text-xl font-black tracking-wider uppercase leading-none truncate">
                   ADMIN ANGGOTA & KELUARGA
                 </h1>
                 <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-800/80 border border-emerald-400/30 text-[10px] text-emerald-200 font-semibold">
@@ -172,13 +174,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Firebase DB
                 </span>
               </div>
-              <p className="text-xs text-emerald-200 mt-1 font-medium">
+              <p className="text-[11px] sm:text-xs text-emerald-200 mt-1 font-medium truncate">
                 Yayasan Al Ikhlas Sembilan Satu
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={onOpenNotifications}
               className="relative p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors cursor-pointer"
@@ -193,19 +195,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </button>
             <button
               onClick={onLogout}
-              className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+              className="px-2.5 sm:px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
               title="Keluar dari Admin"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Keluar</span>
+              <span className="hidden sm:inline">Keluar</span>
             </button>
           </div>
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-6">
-        {/* 4 Top Stat Cards */}
-        <div className="grid grid-cols-4 gap-2 sm:gap-3">
+      <div className="max-w-5xl lg:max-w-6xl mx-auto px-3 sm:px-6 -mt-6">
+        {/* 4 Top Stat Cards: 2 Cols on Mobile, 4 Cols on Tablet & PC */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           <div className="bg-white rounded-2xl p-3 sm:p-4 text-center shadow-xs border border-gray-100">
             <div className="text-xl sm:text-3xl font-extrabold text-[#0b5d34]">
               {countKepalaKeluarga}
@@ -327,19 +329,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           ))}
         </div>
 
-        {/* Member Cards List */}
-        <div className="mt-3 space-y-3">
+        {/* Member Cards Grid: 1 Col on Mobile, 2 Cols on Laptop & PC */}
+        <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-3.5">
           {filteredList.length > 0 ? (
             filteredList.map((member) => {
               const roleText = getPeranLabel(member.peranKeluarga);
               return (
                 <div
                   key={member.id}
-                  className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-gray-100 transition-all hover:shadow-md"
+                  className="bg-white rounded-2xl p-3.5 sm:p-5 shadow-xs border border-gray-100 transition-all hover:shadow-md flex flex-col justify-between"
                 >
                   <div className="flex items-start gap-3">
                     {/* Foto Diri */}
-                    <div className="w-13 h-17 rounded-lg overflow-hidden bg-emerald-50 border border-[#0b5d34] shrink-0">
+                    <div className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl overflow-hidden bg-emerald-50 border-2 border-[#0b5d34] shrink-0">
                       {member.fotoUrl ? (
                         <img
                           src={member.fotoUrl}
@@ -347,8 +349,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           className="w-full h-full object-cover"
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-xs">
-                          AI
+                        <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-base">
+                          {getInitials(member.nama)}
                         </div>
                       )}
                     </div>

@@ -19,7 +19,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   const isPdf = url.includes('application/pdf') || fileName?.toLowerCase().endsWith('.pdf');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-xs animate-in fade-in duration-200">
       <div 
         className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}

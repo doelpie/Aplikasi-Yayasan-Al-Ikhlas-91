@@ -29,19 +29,21 @@ export const Header: React.FC<HeaderProps> = ({
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <header className="relative bg-[#0b5d34] text-white pt-6 pb-12 px-4 sm:px-6 shadow-md transition-colors border-b-2 border-[#d4af37]">
-      <div className="max-w-xl mx-auto">
+    <header className="relative bg-[#0b5d34] text-white pt-5 sm:pt-6 pb-10 sm:pb-12 px-3 sm:px-6 shadow-md transition-colors border-b-2 border-[#d4af37]">
+      <div className="max-w-xl md:max-w-3xl lg:max-w-4xl mx-auto">
         {/* Top Navbar Row */}
         <div className="flex items-center justify-between pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-full bg-white text-[#0b5d34] flex items-center justify-center font-black text-lg shadow-sm border-2 border-amber-300">
-              AI
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wider text-emerald-200 font-bold leading-none">
-                {isAdminView ? 'Sistem Manajemen NU' : 'Yayasan Al Ikhlas Sembilan Satu'}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <img 
+              src="/logo.png" 
+              alt="Logo Yayasan Al Ikhlas" 
+              className="w-10 h-10 sm:w-11 sm:h-11 object-contain drop-shadow-sm shrink-0" 
+            />
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-[11px] uppercase tracking-wider text-emerald-200 font-bold leading-none truncate">
+                {isAdminView ? 'Sistem Manajemen Pengurus' : 'Yayasan Al Ikhlas Sembilan Satu'}
               </div>
-              <h1 className="text-base sm:text-lg font-bold leading-tight mt-0.5 text-white">
+              <h1 className="text-sm sm:text-lg font-bold leading-tight mt-0.5 text-white truncate">
                 Manajemen Anggota & Keluarga
               </h1>
             </div>
@@ -97,23 +99,23 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Two Top Stats Cards - NU Green Accents */}
         {!isAdminView && (
-          <div className="grid grid-cols-2 gap-3.5 mt-2">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 mt-2">
             {/* Card 1: Kepala Keluarga */}
-            <div className="bg-white text-stone-900 rounded-2xl p-4 sm:p-5 text-center shadow-lg border-2 border-emerald-900/10 transition-transform">
-              <div className="text-3xl sm:text-4xl font-extrabold text-[#0b5d34] tracking-tight">
+            <div className="bg-white text-stone-900 rounded-2xl p-3.5 sm:p-5 text-center shadow-lg border-2 border-emerald-900/10 transition-transform">
+              <div className="text-2xl sm:text-4xl font-extrabold text-[#0b5d34] tracking-tight">
                 {totalKepalaKeluarga}
               </div>
-              <div className="text-xs sm:text-sm font-bold text-gray-600 mt-1">
+              <div className="text-[11px] sm:text-sm font-bold text-gray-600 mt-0.5 sm:mt-1">
                 Kepala Keluarga
               </div>
             </div>
 
             {/* Card 2: Total Jiwa */}
-            <div className="bg-white text-stone-900 rounded-2xl p-4 sm:p-5 text-center shadow-lg border-2 border-emerald-900/10 transition-transform">
-              <div className="text-3xl sm:text-4xl font-extrabold text-[#0b5d34] tracking-tight">
+            <div className="bg-white text-stone-900 rounded-2xl p-3.5 sm:p-5 text-center shadow-lg border-2 border-emerald-900/10 transition-transform">
+              <div className="text-2xl sm:text-4xl font-extrabold text-[#0b5d34] tracking-tight">
                 {totalJiwa}
               </div>
-              <div className="text-xs sm:text-sm font-bold text-gray-600 mt-1">
+              <div className="text-[11px] sm:text-sm font-bold text-gray-600 mt-0.5 sm:mt-1">
                 Total Jiwa
               </div>
             </div>

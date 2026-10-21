@@ -107,9 +107,9 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
       <div 
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-6 sm:p-7 max-h-[92vh] overflow-y-auto border-t-4 border-[#0b5d34]"
+        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-4 sm:p-7 max-h-[92vh] overflow-y-auto border-t-4 border-[#0b5d34]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between pb-3 border-b border-gray-100">

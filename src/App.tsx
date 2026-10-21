@@ -275,7 +275,7 @@ export default function App() {
   };
 
   const handleResetData = () => {
-    if (window.confirm('Kembalikan semua data ke data contoh awal (Hijau NU)?')) {
+    if (window.confirm('Kembalikan semua data ke data awal Yayasan Al Ikhlas Sembilan Satu?')) {
       resetToInitialData();
     }
   };
@@ -383,71 +383,78 @@ export default function App() {
             )}
           </main>
 
-          {/* Floating Bottom Pill Navigation Bar - Hijau NU Theme */}
-          <div className="fixed bottom-4 inset-x-0 z-40 flex justify-center px-4 print:hidden pointer-events-none">
-            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-emerald-900/15 shadow-2xl rounded-full p-1.5 flex items-center gap-1 sm:gap-2">
+          {/* Responsive Bottom Navigation Bar across Mobile, Tablet, Laptop, and PC */}
+          <div className="fixed bottom-2.5 sm:bottom-4 inset-x-0 z-40 flex justify-center px-2 sm:px-4 print:hidden pointer-events-none">
+            <nav 
+              aria-label="Navigasi Utama Aplikasi"
+              className="pointer-events-auto w-full max-w-md sm:w-auto bg-white/95 backdrop-blur-md border border-emerald-900/15 shadow-2xl rounded-2xl sm:rounded-full p-1 sm:p-1.5 flex items-center justify-between sm:justify-center gap-0.5 sm:gap-2"
+            >
               {/* Tab 1: Anggota */}
               <button
                 onClick={() => setActiveTab('anggota')}
-                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 px-1 sm:px-4 rounded-xl sm:rounded-full transition-all cursor-pointer select-none ${
                   activeTab === 'anggota'
-                    ? 'bg-[#0b5d34] text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-[#0b5d34] text-white shadow-xs font-bold'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold'
                 }`}
+                title="Daftar Anggota"
               >
-                <Users className={`w-4 h-4 ${activeTab === 'anggota' ? 'text-white' : 'text-emerald-700'}`} />
-                <span className="text-xs sm:text-sm font-bold">Anggota</span>
+                <Users className={`w-4 h-4 shrink-0 ${activeTab === 'anggota' ? 'text-white' : 'text-emerald-700'}`} />
+                <span className="text-[10px] sm:text-sm leading-tight">Anggota</span>
               </button>
 
               {/* Tab 2: Daftar */}
               <button
                 onClick={() => setActiveTab('daftar')}
-                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 px-1 sm:px-4 rounded-xl sm:rounded-full transition-all cursor-pointer select-none ${
                   activeTab === 'daftar'
-                    ? 'bg-[#0b5d34] text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-[#0b5d34] text-white shadow-xs font-bold'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold'
                 }`}
+                title="Pendaftaran Anggota"
               >
-                <FilePenLine className={`w-4 h-4 ${activeTab === 'daftar' ? 'text-white' : 'text-amber-600'}`} />
-                <span className="text-xs sm:text-sm font-bold">Daftar</span>
+                <FilePenLine className={`w-4 h-4 shrink-0 ${activeTab === 'daftar' ? 'text-white' : 'text-amber-600'}`} />
+                <span className="text-[10px] sm:text-sm leading-tight">Daftar</span>
               </button>
 
               {/* Tab 3: Profil Saya / Portal Keluarga */}
               <button
                 onClick={() => setActiveTab('profil')}
-                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 px-1 sm:px-4 rounded-xl sm:rounded-full transition-all cursor-pointer select-none ${
                   activeTab === 'profil'
-                    ? 'bg-[#0b5d34] text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-[#0b5d34] text-white shadow-xs font-bold'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold'
                 }`}
+                title="Profil & Kartu Saya"
               >
-                <User className={`w-4 h-4 ${activeTab === 'profil' ? 'text-white' : 'text-blue-600'}`} />
-                <span className="text-xs sm:text-sm font-bold">Profil</span>
+                <User className={`w-4 h-4 shrink-0 ${activeTab === 'profil' ? 'text-white' : 'text-blue-600'}`} />
+                <span className="text-[10px] sm:text-sm leading-tight">Profil</span>
               </button>
 
               {/* Tab 4: Info */}
               <button
                 onClick={() => setActiveTab('info')}
-                className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 px-1 sm:px-4 rounded-xl sm:rounded-full transition-all cursor-pointer select-none ${
                   activeTab === 'info'
-                    ? 'bg-[#0b5d34] text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-[#0b5d34] text-white shadow-xs font-bold'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold'
                 }`}
+                title="Informasi & Cek Status"
               >
-                <Info className={`w-4 h-4 ${activeTab === 'info' ? 'text-white' : 'text-sky-600'}`} />
-                <span className="text-xs sm:text-sm font-bold">Info</span>
+                <Info className={`w-4 h-4 shrink-0 ${activeTab === 'info' ? 'text-white' : 'text-sky-600'}`} />
+                <span className="text-[10px] sm:text-sm leading-tight">Info</span>
               </button>
 
               {/* Tab 5: Admin Switch */}
               <button
                 onClick={() => setActiveTab('admin')}
-                className="flex items-center gap-1 px-3 py-2.5 rounded-full transition-all cursor-pointer text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                className="flex-1 sm:flex-initial flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 px-1 sm:px-4 rounded-xl sm:rounded-full transition-all cursor-pointer select-none text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold"
                 title="Masuk Pengurus/Admin"
               >
-                <Shield className="w-4 h-4 text-[#0b5d34]" />
-                <span className="text-xs font-bold hidden sm:inline">Admin</span>
+                <Shield className="w-4 h-4 shrink-0 text-[#0b5d34]" />
+                <span className="text-[10px] sm:text-sm leading-tight">Admin</span>
               </button>
-            </div>
+            </nav>
           </div>
         </div>
       )}

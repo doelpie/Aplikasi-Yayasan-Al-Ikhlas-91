@@ -32,9 +32,11 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
       {/* Header Bar with Hijau NU Theme */}
       <div className="bg-[#0b5d34] text-white py-7 px-4 text-center shadow-md">
         <div className="max-w-xl mx-auto flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full bg-white text-[#0b5d34] flex items-center justify-center font-black text-xl mb-2 shadow-sm border-2 border-amber-300">
-            AI
-          </div>
+          <img 
+            src="/logo.png" 
+            alt="Logo Yayasan Al Ikhlas" 
+            className="w-16 h-16 object-contain mb-2 drop-shadow-sm" 
+          />
           <h1 className="text-xl sm:text-2xl font-black tracking-wider uppercase">
             ADMIN ANGGOTA
           </h1>

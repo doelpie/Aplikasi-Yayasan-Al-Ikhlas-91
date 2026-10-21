@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Member } from '../types';
-import { getInitials, maskNik, maskPhoneNumber, formatIndonesianDate, getPeranLabel } from '../utils/storage';
-import { downloadMemberCardImage } from '../utils/cardGenerator';
-import { Download, Printer, X, CheckCircle, ShieldCheck } from 'lucide-react';
+import { getInitials, formatIndonesianDate, getPeranLabel } from '../utils/storage';
+import { downloadMemberCardImage, downloadMemberCardPdf } from '../utils/cardGenerator';
+import { Download, Printer, X, CheckCircle, FileDown } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface MemberCardModalProps {
@@ -16,7 +16,8 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
   onClose,
   showCelebration = false,
 }) => {
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingPng, setIsDownloadingPng] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   React.useEffect(() => {
     if (showCelebration) {
@@ -32,16 +33,35 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
     }
   }, [showCelebration]);
 
+  const cleanName = member.nama.trim().replace(/\s+/g, '_');
+  const targetFileName = `Kartu_Anggota_Yayasan_Al-Ikhlas _${member.id}_${cleanName}`;
+
   const handlePrint = () => {
+    const originalTitle = document.title;
+    document.title = targetFileName;
     window.print();
+    const restore = () => {
+      document.title = originalTitle;
+    };
+    window.addEventListener('afterprint', restore, { once: true });
+    setTimeout(restore, 2000);
   };
 
-  const handleDownload = async () => {
-    setIsDownloading(true);
+  const handleDownloadPng = async () => {
+    setIsDownloadingPng(true);
     try {
       await downloadMemberCardImage(member);
     } finally {
-      setIsDownloading(false);
+      setIsDownloadingPng(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true);
+    try {
+      await downloadMemberCardPdf(member);
+    } finally {
+      setIsDownloadingPdf(false);
     }
   };
 
@@ -49,20 +69,20 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
   const idDocType = member.peranKeluarga === 'anak' ? 'NIK / KIA' : 'NIK (KTP)';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
       <div 
         className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden my-auto border-2 border-emerald-800/40"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top bar modal control */}
-        <div className="flex items-center justify-between px-5 py-3.5 bg-stone-900 text-white print:hidden">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-emerald-400" />
-            <span className="text-sm font-semibold">Kartu Anggota Resmi Yayasan Al Ikhlas Sembilan Satu</span>
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-3.5 bg-stone-900 text-white print:hidden">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-semibold truncate">Kartu Anggota Resmi Yayasan Al Ikhlas Sembilan Satu</span>
           </div>
           <button
             onClick={onClose}
-            className="text-stone-300 hover:text-white p-1 rounded-full hover:bg-stone-800 transition-colors cursor-pointer"
+            className="text-stone-300 hover:text-white p-1 rounded-full hover:bg-stone-800 transition-colors cursor-pointer shrink-0 ml-2"
             title="Tutup"
           >
             <X className="w-5 h-5" />
@@ -70,23 +90,25 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
         </div>
 
         {/* PRINTABLE / DISPLAYABLE CARD CONTAINER */}
-        <div className="p-4 sm:p-6 bg-stone-100 flex justify-center">
+        <div className="p-2 sm:p-6 bg-stone-100 flex justify-center">
           <div 
             id="printable-card"
             className="w-full max-w-[620px] bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden flex flex-col font-sans text-stone-900 print:shadow-none print:border-none print:w-full print:m-0"
           >
-            {/* CARD HEADER - HIJAU NU BANNER (#0b5d34) */}
-            <div className="bg-[#0b5d34] text-white px-5 sm:px-6 py-4 flex items-center gap-4 relative">
-              <div className="w-13 h-13 rounded-full bg-white flex items-center justify-center shrink-0 shadow-sm border-2 border-amber-300">
-                <span className="text-[#0b5d34] font-black text-2xl tracking-tight">AI</span>
-              </div>
+            {/* CARD HEADER - BANNER (#0b5d34) */}
+            <div className="bg-[#0b5d34] text-white px-3.5 sm:px-6 py-3 sm:py-4 flex items-center gap-2.5 sm:gap-4 relative">
+              <img 
+                src="/logo.png" 
+                alt="Logo Yayasan Al Ikhlas" 
+                className="w-10 h-10 sm:w-13 sm:h-13 object-contain shrink-0 drop-shadow-sm" 
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <h1 className="text-lg sm:text-xl font-bold leading-tight truncate">
+                  <h1 className="text-sm sm:text-xl font-bold leading-tight truncate">
                     Yayasan Al Ikhlas Sembilan Satu
                   </h1>
                 </div>
-                <p className="text-xs text-emerald-100 leading-tight mt-0.5">
+                <p className="text-[11px] sm:text-xs text-emerald-100 leading-tight mt-0.5 truncate">
                   Jl. Raya Dalung No. 91 Br. Kaja - Dalung, Badung - Bali
                 </p>
                 <div className="flex items-center gap-2 mt-1">
@@ -136,7 +158,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                   </div>
                 </div>
 
-                {/* NIK / KIA */}
+                {/* NIK / KIA & NO KK - Full unmasked when card is opened */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
@@ -167,7 +189,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                   </div>
                 </div>
 
-                {/* Hubungan Keluarga & No Telp */}
+                {/* Hubungan Keluarga & No Telp / WA - TIDAK DISENSOR */}
                 <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-100">
                   <div>
                     <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
@@ -183,7 +205,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                       NO. HP / WA
                     </div>
                     <div className="text-xs font-bold text-gray-900 font-mono mt-0.5">
-                      {maskPhoneNumber(member.noHp)}
+                      {member.noHp || '-'}
                     </div>
                   </div>
                 </div>
@@ -201,7 +223,7 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                 </div>
               </div>
               
-              {/* Green & Gold NU strip */}
+              {/* Bottom strip */}
               <div className="w-full h-1 bg-[#0b5d34] rounded-full mt-2.5 mb-1"></div>
               <div className="w-full h-0.5 bg-[#d4af37] rounded-full mb-2"></div>
               
@@ -215,23 +237,34 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
         {/* MODAL ACTION BUTTONS */}
         <div className="p-4 bg-white border-t border-gray-100 flex flex-wrap items-center justify-between gap-3 print:hidden">
           <div className="text-xs text-gray-500 hidden sm:block">
-            Dilindungi sistem verifikasi 6 digit terakhir NIK/KIA.
+            Format file: <span className="font-mono text-gray-700 font-medium text-[11px]">{targetFileName}.[pdf|png]</span>
           </div>
-          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
             <button
               onClick={handlePrint}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer"
+              title="Cetak langsung menggunakan printer atau browser print dialog"
             >
               <Printer className="w-4 h-4" />
-              <span>Cetak / PDF</span>
+              <span>Cetak</span>
             </button>
             <button
-              onClick={handleDownload}
-              disabled={isDownloading}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-[#0b5d34] hover:bg-[#084d2a] rounded-xl shadow transition-colors cursor-pointer"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-colors cursor-pointer shadow-xs"
+              title="Unduh file PDF resmi kartu anggota"
+            >
+              <FileDown className="w-4 h-4 text-emerald-700" />
+              <span>{isDownloadingPdf ? 'Menyiapkan...' : 'Simpan PDF'}</span>
+            </button>
+            <button
+              onClick={handleDownloadPng}
+              disabled={isDownloadingPng}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-[#0b5d34] hover:bg-[#084d2a] rounded-xl shadow transition-colors cursor-pointer"
+              title="Unduh gambar PNG kartu anggota beresolusi tinggi"
             >
               <Download className="w-4 h-4" />
-              <span>{isDownloading ? 'Menyiapkan...' : 'Unduh Gambar (PNG)'}</span>
+              <span>{isDownloadingPng ? 'Menyiapkan...' : 'Simpan PNG'}</span>
             </button>
           </div>
         </div>

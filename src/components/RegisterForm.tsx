@@ -274,8 +274,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   if (submittedMember) {
     const roleText = getPeranLabel(submittedMember.peranKeluarga);
     return (
-      <div className="max-w-xl mx-auto px-4 sm:px-6 pt-4 pb-28">
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-emerald-100 text-center">
+      <div className="max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-6 pt-4 pb-28">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-emerald-100 text-center">
           <div className="w-16 h-16 rounded-full bg-emerald-100 text-[#0b5d34] flex items-center justify-center mx-auto mb-4 border border-emerald-300">
             <CheckCircle2 className="w-10 h-10" />
           </div>
@@ -359,8 +359,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   const idLabel = peranKeluarga === 'anak' ? 'Nomor KTP atau KIA (Kartu Identitas Anak)' : 'Nomor KTP (NIK 16 Digit)';
 
   return (
-    <div className="max-w-xl mx-auto px-4 sm:px-6 pt-2 pb-28">
-      <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-xs border border-gray-100">
+    <div className="max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-6 pt-2 pb-28">
+      <div className="bg-white rounded-3xl p-4 sm:p-7 shadow-xs border border-gray-100">
         <div className="pb-4 border-b border-gray-100">
           <h2 className="text-xl sm:text-2xl font-bold text-[#0b5d34]">
             Tambah Anggota

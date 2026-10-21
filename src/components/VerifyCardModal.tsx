@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Member } from '../types';
 import { ShieldCheck, AlertCircle, X, KeyRound } from 'lucide-react';
-import { verifyMemberPin, getPeranLabel, maskNik, maskKk } from '../utils/storage';
+import { verifyMemberPin, getPeranLabel, maskNik, maskKk, getInitials } from '../utils/storage';
 
 interface VerifyCardModalProps {
   member: Member;
@@ -37,9 +37,9 @@ export const VerifyCardModal: React.FC<VerifyCardModalProps> = ({
   const idDocType = member.peranKeluarga === 'anak' ? 'KTP / KIA' : 'KTP';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
       <div 
-        className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 sm:p-8 transform transition-all duration-300 max-h-[92vh] overflow-y-auto border-t-4 sm:border-t-0 sm:border-2 border-[#0b5d34]"
+        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 sm:p-8 transform transition-all duration-300 max-h-[92vh] overflow-y-auto border-2 border-[#0b5d34]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header with Hijau NU Branding */}
@@ -73,8 +73,8 @@ export const VerifyCardModal: React.FC<VerifyCardModalProps> = ({
                 className="w-12 h-14 object-cover rounded-lg border-2 border-[#0b5d34] shadow-xs shrink-0"
               />
             ) : (
-              <div className="w-12 h-14 bg-emerald-100 text-[#0b5d34] font-bold text-lg rounded-lg flex items-center justify-center border border-emerald-300 shrink-0">
-                AI
+              <div className="w-12 h-14 bg-emerald-100 text-[#0b5d34] font-bold text-base rounded-lg flex items-center justify-center border border-emerald-300 shrink-0">
+                {getInitials(member.nama)}
               </div>
             )}
             <div className="min-w-0 flex-1">

@@ -1,11 +1,12 @@
 import { Member } from '../types';
-import { formatIndonesianDate, getInitials, getPeranLabel, maskNik, maskPhoneNumber } from './storage';
+import { formatIndonesianDate, getInitials, getPeranLabel } from './storage';
+import { jsPDF } from 'jspdf';
 
 /**
- * Generates and downloads high-resolution PNG of the Member Card
- * with authentic Hijau NU theme and photo portrait integration
+ * Renders high-resolution Canvas of the Member Card
+ * WhatsApp and phone number is completely uncensored on the open card
  */
-export async function downloadMemberCardImage(member: Member): Promise<void> {
+export async function renderCardCanvas(member: Member): Promise<HTMLCanvasElement | null> {
   const canvas = document.createElement('canvas');
   const width = 1000;
   const height = 630;
@@ -13,13 +14,13 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   canvas.height = height;
 
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) return null;
 
   // Background
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
 
-  // Top NU Green Header Bar (#0b5d34)
+  // Top Header Bar (#0b5d34)
   const headerHeight = 135;
   ctx.fillStyle = '#0b5d34';
   ctx.fillRect(0, 0, width, headerHeight);
@@ -28,19 +29,29 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   ctx.fillStyle = '#d4af37';
   ctx.fillRect(0, headerHeight, width, 5);
 
-  // Logo circle
-  ctx.save();
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(75, 68, 38, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = '#0b5d34';
-  ctx.font = 'bold 34px "Plus Jakarta Sans", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('AI', 75, 69);
-  ctx.restore();
+  // Logo Yayasan Al Ikhlas (Transparent background over green header)
+  try {
+    const logoImg = new Image();
+    await new Promise<void>((resolve, reject) => {
+      logoImg.onload = () => resolve();
+      logoImg.onerror = () => reject();
+      logoImg.src = '/logo.png';
+    });
+    ctx.drawImage(logoImg, 32, 22, 90, 90);
+  } catch (e) {
+    // Fallback if logo fails to load
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(75, 68, 38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0b5d34';
+    ctx.font = 'bold 34px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('AI', 75, 69);
+    ctx.restore();
+  }
 
   // Header Titles
   ctx.fillStyle = '#ffffff';
@@ -126,7 +137,7 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
   ctx.fillText(member.nama, contentX, currentY);
 
-  // 3. No. KTP / NIK (or KIA)
+  // 3. No. KTP / NIK (or KIA) - unmasked on open card
   currentY += 34;
   ctx.fillStyle = '#6b7280';
   ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
@@ -138,7 +149,7 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   ctx.font = 'bold 18px monospace';
   ctx.fillText(member.nik, contentX, currentY);
 
-  // 4. No. Kartu Keluarga (KK)
+  // 4. No. Kartu Keluarga (KK) - unmasked on open card
   currentY += 32;
   ctx.fillStyle = '#6b7280';
   ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
@@ -176,11 +187,11 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   }
   ctx.fillText(line.trim(), contentX, currentY);
 
-  // 6. No HP / WA
+  // 6. No HP / WhatsApp - JANGAN DISENSOR (Uncensored)
   currentY += 28;
   ctx.fillStyle = '#6b7280';
   ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
-  ctx.fillText('NO. HP / WHATSAPP: ' + maskPhoneNumber(member.noHp), contentX, currentY);
+  ctx.fillText('NO. HP / WHATSAPP: ' + (member.noHp || '-'), contentX, currentY);
 
   // Footer separator
   ctx.strokeStyle = '#e2e8f0';
@@ -199,7 +210,7 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   ctx.textAlign = 'right';
   ctx.fillText(`Dicetak: ${printDate}`, width - 55, 565);
 
-  // Hijau NU bottom bar
+  // Bottom green bar
   ctx.fillStyle = '#0b5d34';
   ctx.fillRect(55, 580, width - 110, 4);
 
@@ -213,9 +224,50 @@ export async function downloadMemberCardImage(member: Member): Promise<void> {
   ctx.font = '13px "Plus Jakarta Sans", sans-serif';
   ctx.fillText('Kartu ini merupakan bukti keanggotaan resmi Yayasan Al Ikhlas Sembilan Satu', width / 2, 608);
 
-  // Download trigger
+  return canvas;
+}
+
+/**
+ * Downloads PNG image of the member card with the exact filename format:
+ * Kartu_Anggota_Yayasan_Al-Ikhlas _ID_Nama_Anggota.png
+ */
+export async function downloadMemberCardImage(member: Member): Promise<void> {
+  const canvas = await renderCardCanvas(member);
+  if (!canvas) return;
+
+  const cleanName = member.nama.trim().replace(/\s+/g, '_');
+  const filename = `Kartu_Anggota_Yayasan_Al-Ikhlas _${member.id}_${cleanName}.png`;
+
   const link = document.createElement('a');
-  link.download = `Kartu_Anggota_NU_${member.id}_${member.nama.replace(/\s+/g, '_')}.png`;
+  link.download = filename;
   link.href = canvas.toDataURL('image/png');
+  document.body.appendChild(link);
   link.click();
+  document.body.removeChild(link);
+}
+
+/**
+ * Downloads PDF of the member card with the exact filename format:
+ * Kartu_Anggota_Yayasan_Al-Ikhlas _ID_Nama_Anggota.pdf
+ */
+export async function downloadMemberCardPdf(member: Member): Promise<void> {
+  const canvas = await renderCardCanvas(member);
+  if (!canvas) return;
+
+  const cleanName = member.nama.trim().replace(/\s+/g, '_');
+  const filename = `Kartu_Anggota_Yayasan_Al-Ikhlas _${member.id}_${cleanName}.pdf`;
+
+  // Standard high resolution card PDF dimensions in landscape
+  const cardWidthMm = 150;
+  const cardHeightMm = Math.round((canvas.height / canvas.width) * cardWidthMm * 100) / 100;
+
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: [cardWidthMm + 10, cardHeightMm + 10],
+  });
+
+  const imgData = canvas.toDataURL('image/png');
+  doc.addImage(imgData, 'PNG', 5, 5, cardWidthMm, cardHeightMm);
+  doc.save(filename);
 }

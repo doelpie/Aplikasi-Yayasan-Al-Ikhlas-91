@@ -37,9 +37,9 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
   };
 
   return (
-    <div className="max-w-xl mx-auto px-4 sm:px-6 pt-2 pb-28 space-y-4">
+    <div className="max-w-xl md:max-w-3xl lg:max-w-4xl mx-auto px-3 sm:px-6 pt-2 pb-28 space-y-4">
       {/* Cek Status Pendaftaran Mandiri */}
-      <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100">
+      <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-xs border border-gray-100">
         <div className="flex items-center gap-2.5 mb-2">
           <div className="w-9 h-9 rounded-full bg-emerald-100 text-[#0b5d34] flex items-center justify-center font-bold">
             <Search className="w-4 h-4" />
@@ -203,10 +203,12 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
 
       {/* Kontak Sekretariat Yayasan */}
       <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-full bg-emerald-100 text-[#0b5d34] flex items-center justify-center font-bold">
-            <HelpCircle className="w-5 h-5" />
-          </div>
+        <div className="flex items-center gap-3">
+          <img 
+            src="/logo.png" 
+            alt="Logo Yayasan Al Ikhlas" 
+            className="w-10 h-10 object-contain drop-shadow-xs shrink-0" 
+          />
           <h2 className="text-base font-bold text-gray-900">
             Sekretariat Yayasan Al Ikhlas Sembilan Satu
           </h2>
@@ -226,12 +228,12 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
             <div>
               <strong className="block text-gray-900">WhatsApp Layanan</strong>
               <a 
-                href="https://wa.me/6281234567890?text=Halo%20Pengurus%20Yayasan%20Al%20Ikhlas%20Sembilan%20Satu" 
+                href="https://wa.me/628123986794?text=Halo%20Pengurus%20Yayasan%20Al%20Ikhlas%20Sembilan%20Satu" 
                 target="_blank" 
                 rel="noreferrer"
                 className="text-[#0b5d34] hover:underline font-bold"
               >
-                +62 812-3456-7890 (Pengurus Yayasan)
+                08123986794 (+62 812-3986-794)
               </a>
             </div>
           </div>
@@ -240,7 +242,12 @@ export const InfoSection: React.FC<InfoSectionProps> = ({
             <Mail className="w-4 h-4 text-[#0b5d34] shrink-0 mt-0.5" />
             <div>
               <strong className="block text-gray-900">Email Resmi</strong>
-              alikhlas91.dalung@gmail.com
+              <a
+                href="mailto:alikhlas91dalung@gmail.com"
+                className="text-[#0b5d34] hover:underline font-bold"
+              >
+                alikhlas91dalung@gmail.com
+              </a>
             </div>
           </div>
         </div>
