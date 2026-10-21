@@ -1,12 +1,12 @@
 {
   "projectId": "virtual-ellipse-138923",
   "appId": "1:316122783631:web:7d381d28bfca7fd34b35fa",
-  "apiKey": "AIzaSyCXNWUDq0m5esbNqHlkntVeDlasrnaxej8",
+  "apiKey": "YOUR_FIREBASE_API_KEY_HERE",
   "authDomain": "virtual-ellipse-138923.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-yayasanalikhlass-0fb46e6c-c2a4-469a-b232-5f1eaf333636",
   "storageBucket": "virtual-ellipse-138923.firebasestorage.app",
   "messagingSenderId": "316122783631",
   "measurementId": "",
-  "oAuthClientId": "316122783631-i54tv1uk7s7cu7b8taefci4s3smn8m1p.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

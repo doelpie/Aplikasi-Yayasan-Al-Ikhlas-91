@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Member, FamilyRole } from '../types';
-import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users } from 'lucide-react';
+import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users, ShieldCheck, Check, Upload, Image, FileText, Trash2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getAvailableKepalaKeluarga, getPeranLabel } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
+
+// Sample preview data URIs for demo testing
+const SAMPLE_KTP_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="400" height="250" rx="16" fill="%230b5d34"/><rect x="12" y="12" width="376" height="226" rx="12" fill="%23f0fdf4"/><text x="24" y="45" font-family="sans-serif" font-size="15" font-weight="bold" fill="%230b5d34">REPUBLIK INDONESIA</text><text x="24" y="66" font-family="sans-serif" font-size="11" font-weight="bold" fill="%23166534">KARTU TANDA PENDUDUK / KIA</text><rect x="24" y="85" width="80" height="105" rx="8" fill="%23bbf7d0"/><text x="40" y="145" font-family="sans-serif" font-size="32" fill="%23166534">👤</text><text x="120" y="105" font-family="sans-serif" font-size="12" font-weight="bold" fill="%231f2937">NIK : 5103051408860012</text><text x="120" y="128" font-family="sans-serif" font-size="11" fill="%23374151">Nama : Achmad Zaini M.</text><text x="120" y="150" font-family="sans-serif" font-size="11" fill="%23374151">Alamat : Dalung, Badung</text><text x="120" y="172" font-family="sans-serif" font-size="10" font-weight="bold" fill="%2315803d">✓ DOKUMEN VALID KTP</text></svg>';
+
+const SAMPLE_KK_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="400" height="250" rx="16" fill="%231e3a8a"/><rect x="12" y="12" width="376" height="226" rx="12" fill="%23eff6ff"/><text x="24" y="45" font-family="sans-serif" font-size="15" font-weight="bold" fill="%231e3a8a">KARTU KELUARGA (KK)</text><text x="24" y="66" font-family="sans-serif" font-size="11" font-weight="bold" fill="%231d4ed8">No. KK : 5103052809110045</text><rect x="24" y="85" width="352" height="115" rx="8" fill="%23ffffff" stroke="%23cbd5e1"/><text x="36" y="112" font-family="sans-serif" font-size="11" font-weight="bold" fill="%231e293b">Nama Kepala Keluarga : Achmad Zaini</text><text x="36" y="132" font-family="sans-serif" font-size="10" fill="%23475569">Alamat : Jl. Raya Dalung No. 112</text><text x="36" y="152" font-family="sans-serif" font-size="10" fill="%23475569">Desa/Kel : Dalung, Kuta Utara</text><text x="36" y="180" font-family="sans-serif" font-size="10" font-weight="bold" fill="%232563eb">✓ DOKUMEN ASLI KELUARGA</text></svg>';
+
 
 interface RegisterFormProps {
   allMembers: Member[];
@@ -132,7 +138,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Demo fill helper with genuine Syar'i Photos
+  // Demo fill helper with genuine Syar'i Photos & Sample Documents
   const handleFillDemo = () => {
     if (peranKeluarga === 'kepala_keluarga') {
       setNik('5103051408860012');
@@ -147,14 +153,31 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         url: SYARI_PHOTOS.kepalaKeluarga,
         name: 'foto_syari_kepala_keluarga.jpg',
       });
+      setKtpData({
+        url: SAMPLE_KTP_IMG,
+        name: 'lampiran_ktp_achmad_zaini.jpg',
+      });
+      setKkData({
+        url: SAMPLE_KK_IMG,
+        name: 'lampiran_kartu_keluarga_asli.jpg',
+      });
     } else if (peranKeluarga === 'istri') {
       setNik('5103056004890015');
       setNama('Fatimah Az Zahra');
       setTempatTanggalLahir('Denpasar, 20 April 1989');
       setNoHp('081338877113');
+      setEmail('fatimah.azzahra@gmail.com');
       setFotoData({
         url: SYARI_PHOTOS.istri,
         name: 'foto_syari_istri_muslimah.jpg',
+      });
+      setKtpData({
+        url: SAMPLE_KTP_IMG,
+        name: 'lampiran_ktp_fatimah.jpg',
+      });
+      setKkData({
+        url: SAMPLE_KK_IMG,
+        name: 'lampiran_kartu_keluarga_keluarga.jpg',
       });
       if (availableHeads.length > 0) {
         setSelectedKepalaKeluargaId(availableHeads[0].id);
@@ -165,11 +188,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
       // Anak berumur 10 tahun
       setNik('5103052510160018');
       setNama('Muhammad Ilham Pratama');
-      setTempatTanggalLahir('Badung, 25 Oktober 2016'); // 10 tahun
+      setTempatTanggalLahir('Badung, 25 Oktober 2016');
       setNoHp('081338877114');
       setFotoData({
         url: SYARI_PHOTOS.anakLaki,
         name: 'foto_syari_anak_10_tahun.jpg',
+      });
+      setKtpData({
+        url: SAMPLE_KTP_IMG,
+        name: 'lampiran_kia_anak_ilham.jpg',
+      });
+      setKkData({
+        url: SAMPLE_KK_IMG,
+        name: 'lampiran_kartu_keluarga_anak.jpg',
       });
       if (availableHeads.length > 0) {
         setSelectedKepalaKeluargaId(availableHeads[0].id);
@@ -183,39 +214,46 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validasi Wajib: NIK
+    // 1. Validasi Wajib: NIK (KTP / KIA)
     const cleanNik = nik.trim().replace(/\D/g, '');
     if (cleanNik.length < 10) {
-      setError(`Nomor ${peranKeluarga === 'anak' ? 'KTP / KIA' : 'KTP (NIK)'} wajib diisi dengan benar.`);
+      setError(`Nomor ${peranKeluarga === 'anak' ? 'KTP / KIA (NIK)' : 'KTP (NIK)'} wajib diisi dengan benar (minimal 10-16 digit angka).`);
       return;
     }
 
-    // Validasi Wajib: Nama Sesuai KTP
+    // 2. Validasi Wajib: Nama Sesuai KTP
     if (!nama.trim()) {
       setError('Nama Lengkap Sesuai KTP wajib diisi.');
       return;
     }
 
-    // Validasi Wajib: Alamat Lengkap
+    // 3. Validasi Wajib: Nomor Kartu Keluarga (KK)
+    const cleanKk = noKk.trim().replace(/\D/g, '');
+    if (cleanKk.length < 10) {
+      setError('Nomor Kartu Keluarga (No. KK) wajib diisi dengan benar (minimal 10-16 digit angka).');
+      return;
+    }
+
+    // 4. Validasi Wajib: Tempat & Tanggal Lahir
+    if (!tempatTanggalLahir.trim()) {
+      setError('Tempat & Tanggal Lahir wajib diisi sesuai KTP/KIA.');
+      return;
+    }
+
+    // 5. Validasi Wajib: Alamat Lengkap Sesuai Domisili
     if (!alamat.trim()) {
-      setError('Alamat Lengkap wajib diisi.');
+      setError('Alamat Lengkap Sesuai Domisili wajib diisi.');
       return;
     }
 
-    // Validasi Wajib: No HP / WA
-    const cleanHp = noHp.replace(/\D/g, '');
+    // 6. Validasi Wajib: No HP / WA Aktif
+    const cleanHp = noHp.trim().replace(/\D/g, '');
     if (cleanHp.length < 8) {
-      setError('Nomor HP / WhatsApp wajib diisi (minimal 8 digit).');
+      setError('Nomor HP / WhatsApp aktif wajib diisi (minimal 8 digit angka).');
       return;
     }
 
-    // Validasi Wajib: Foto Diri
-    if (!fotoData?.url) {
-      setError('Foto Diri / Pas Foto wajib diunggah untuk ditampilkan pada kartu anggota.');
-      return;
-    }
-
-    // Validasi Kepala Keluarga & No KK
+    // 7. Validasi Kepala Keluarga jika Istri/Anak
     let linkedHeadName: string | undefined;
     if (peranKeluarga !== 'kepala_keluarga') {
       if (!selectedKepalaKeluargaId) {
@@ -228,11 +266,24 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         return;
       }
       linkedHeadName = head.nama;
-    } else {
-      if (!noKk.trim()) {
-        setError('Nomor Kartu Keluarga (KK) wajib diisi untuk Kepala Keluarga.');
-        return;
-      }
+    }
+
+    // 8. VALIDASI WAJIB: FOTO DIRI / PAS FOTO
+    if (!fotoData?.url) {
+      setError('Foto Diri / Pas Foto wajib diunggah untuk kelengkapan cetak Kartu Anggota.');
+      return;
+    }
+
+    // 9. VALIDASI WAJIB: FOTO KTP / KIA
+    if (!ktpData?.url) {
+      setError('Foto Dokumen KTP / KIA wajib diunggah/dilampirkan sebagai verifikasi identitas resmi.');
+      return;
+    }
+
+    // 10. VALIDASI WAJIB: FOTO KARTU KELUARGA (KK)
+    if (!kkData?.url) {
+      setError('Foto Dokumen Kartu Keluarga (KK) wajib diunggah/dilampirkan sebagai verifikasi data keluarga.');
+      return;
     }
 
     try {
@@ -241,19 +292,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         nama: nama.trim(),
         alamat: alamat.trim(),
         noHp: noHp.trim(),
-        noKk: noKk.trim(),
+        noKk: cleanKk || noKk.trim(),
         peranKeluarga,
         kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedKepalaKeluargaId : undefined,
         namaKepalaKeluarga: linkedHeadName,
-        tempatTanggalLahir: tempatTanggalLahir.trim() || 'Dalung, Bali',
+        tempatTanggalLahir: tempatTanggalLahir.trim(),
         jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
         email: email.trim() || undefined,
         fotoUrl: fotoData.url,
         fotoName: fotoData.name,
-        ktpUrl: ktpData?.url,
-        ktpName: ktpData?.name,
-        kkUrl: kkData?.url,
-        kkName: kkData?.name,
+        ktpUrl: ktpData.url,
+        ktpName: ktpData.name,
+        kkUrl: kkData.url,
+        kkName: kkData.name,
       });
 
       setSubmittedMember(created);
@@ -670,55 +721,240 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             />
           </div>
 
-          {/* Lampiran Dokumen KTP & KK (Opsional / Pelengkap) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl">
-              <span className="block text-[11px] font-bold text-gray-700 mb-1">
-                Lampiran KTP/KIA (Opsional)
+          {/* Dokumen Lampiran WAJIB (KTP / KIA & Kartu Keluarga) */}
+          <div className="pt-2 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-[#0b5d34]" />
+                <span>Dokumen Lampiran Foto (Wajib Dilampirkan)</span>
+                <span className="text-red-500">*</span>
               </span>
-              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 shadow-2xs cursor-pointer">
-                <FileUp className="w-3.5 h-3.5" />
-                <span>Pilih Berkas</span>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  onChange={(e) => handleDocumentUpload(e, 'ktp')}
-                  className="hidden"
-                />
-              </label>
-              <div className="text-[11px] text-gray-500 mt-1 truncate">
-                {ktpData ? ktpData.name : 'Belum dipilih'}
-              </div>
+              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                {ktpData && kkData ? '✓ 2 Dokumen Terlampir' : 'Wajib 2 Dokumen'}
+              </span>
             </div>
 
-            <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl">
-              <span className="block text-[11px] font-bold text-gray-700 mb-1">
-                Lampiran KK (Opsional)
-              </span>
-              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 shadow-2xs cursor-pointer">
-                <FileUp className="w-3.5 h-3.5" />
-                <span>Pilih Berkas</span>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  onChange={(e) => handleDocumentUpload(e, 'kk')}
-                  className="hidden"
-                />
-              </label>
-              <div className="text-[11px] text-gray-500 mt-1 truncate">
-                {kkData ? kkData.name : 'Belum dipilih'}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Lampiran 1: KTP / KIA */}
+              <div className={`p-3.5 rounded-2xl border transition-all ${
+                ktpData 
+                  ? 'bg-emerald-50/60 border-emerald-300' 
+                  : 'bg-stone-50 border-amber-300 hover:border-amber-400'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                    <span>Foto KTP / KIA</span>
+                    <span className="text-red-500">*</span>
+                  </span>
+                  {ktpData ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                      <Check className="w-3 h-3" />
+                      <span>Terlampir</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>Wajib Diisi</span>
+                    </span>
+                  )}
+                </div>
+
+                {ktpData ? (
+                  <div className="space-y-2">
+                    <div className="relative rounded-xl overflow-hidden border border-emerald-200 bg-white h-24 flex items-center justify-center group">
+                      <img
+                        src={ktpData.url}
+                        alt="Preview KTP"
+                        className="w-full h-full object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setKtpData(null)}
+                        className="absolute top-1.5 right-1.5 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-xs cursor-pointer"
+                        title="Hapus / Ganti Foto KTP"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-gray-600 truncate max-w-[140px] font-mono">{ktpData.name}</span>
+                      <label className="text-[#0b5d34] hover:underline font-bold cursor-pointer">
+                        Ganti Foto
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleDocumentUpload(e, 'ktp')}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="flex flex-col items-center justify-center p-3 bg-white hover:bg-amber-50/50 border-2 border-dashed border-amber-300 rounded-xl cursor-pointer transition-colors text-center">
+                      <Upload className="w-5 h-5 text-amber-600 mb-1" />
+                      <span className="text-xs font-bold text-gray-800">Unggah Foto KTP / KIA</span>
+                      <span className="text-[10px] text-gray-500 mt-0.5">Format: JPG, PNG, atau PDF (Maks. 5MB)</span>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleDocumentUpload(e, 'ktp')}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Lampiran 2: Kartu Keluarga (KK) */}
+              <div className={`p-3.5 rounded-2xl border transition-all ${
+                kkData 
+                  ? 'bg-emerald-50/60 border-emerald-300' 
+                  : 'bg-stone-50 border-amber-300 hover:border-amber-400'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                    <span>Foto Kartu Keluarga (KK)</span>
+                    <span className="text-red-500">*</span>
+                  </span>
+                  {kkData ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                      <Check className="w-3 h-3" />
+                      <span>Terlampir</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>Wajib Diisi</span>
+                    </span>
+                  )}
+                </div>
+
+                {kkData ? (
+                  <div className="space-y-2">
+                    <div className="relative rounded-xl overflow-hidden border border-emerald-200 bg-white h-24 flex items-center justify-center group">
+                      <img
+                        src={kkData.url}
+                        alt="Preview Kartu Keluarga"
+                        className="w-full h-full object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setKkData(null)}
+                        className="absolute top-1.5 right-1.5 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-xs cursor-pointer"
+                        title="Hapus / Ganti Foto KK"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-gray-600 truncate max-w-[140px] font-mono">{kkData.name}</span>
+                      <label className="text-[#0b5d34] hover:underline font-bold cursor-pointer">
+                        Ganti Foto
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleDocumentUpload(e, 'kk')}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="flex flex-col items-center justify-center p-3 bg-white hover:bg-amber-50/50 border-2 border-dashed border-amber-300 rounded-xl cursor-pointer transition-colors text-center">
+                      <Upload className="w-5 h-5 text-amber-600 mb-1" />
+                      <span className="text-xs font-bold text-gray-800">Unggah Foto Kartu Keluarga (KK)</span>
+                      <span className="text-[10px] text-gray-500 mt-0.5">Format: JPG, PNG, atau PDF (Maks. 5MB)</span>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleDocumentUpload(e, 'kk')}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Checklist Kelengkapan Pendaftaran */}
+          <div className="pt-2">
+            <div className={`p-3.5 rounded-2xl border transition-all text-xs ${
+              fotoData && ktpData && kkData && nik.trim() && nama.trim() && noKk.trim() && alamat.trim() && noHp.trim() && tempatTanggalLahir.trim()
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                : 'bg-stone-50 border-stone-200 text-stone-700'
+            }`}>
+              <div className="font-bold flex items-center justify-between mb-2">
+                <span className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#0b5d34]" />
+                  <span>Status Kelengkapan Berkas & Data</span>
+                </span>
+                {fotoData && ktpData && kkData && nik.trim() && nama.trim() && noKk.trim() && alamat.trim() && noHp.trim() && tempatTanggalLahir.trim() ? (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-200/60 px-2 py-0.5 rounded-full">
+                    ✓ 100% Lengkap
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                    Wajib Lengkap Semua
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  {fotoData ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  )}
+                  <span className={fotoData ? 'font-semibold text-emerald-800' : 'text-gray-500'}>
+                    Pas Foto Diri
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {ktpData ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  )}
+                  <span className={ktpData ? 'font-semibold text-emerald-800' : 'text-gray-500'}>
+                    Foto KTP / KIA
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {kkData ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  )}
+                  <span className={kkData ? 'font-semibold text-emerald-800' : 'text-gray-500'}>
+                    Foto Kartu Keluarga
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {nik.trim() && nama.trim() && noKk.trim() && alamat.trim() && noHp.trim() && tempatTanggalLahir.trim() ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  )}
+                  <span className={nik.trim() && nama.trim() && noKk.trim() ? 'font-semibold text-emerald-800' : 'text-gray-500'}>
+                    Data Identitas KTP/KK
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Submit Button */}
-          <div className="pt-3">
+          <div className="pt-2">
             <button
               type="submit"
               className="w-full py-4 px-5 bg-[#0b5d34] hover:bg-[#084d2a] active:scale-[0.99] text-white font-bold rounded-2xl shadow-md transition-all cursor-pointer text-sm flex items-center justify-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Kirim Pendaftaran Anggota</span>
+              <span>Kirim Pendaftaran Anggota Lengkap</span>
             </button>
           </div>
         </form>

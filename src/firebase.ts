@@ -12,9 +12,20 @@ import {
   query,
   orderBy
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import rawConfig from '../firebase-applet-config.json';
 import { Member, AppNotification } from './types';
 import { INITIAL_MEMBERS } from './data/initialData';
+
+// Support VITE_ environment variables (safe for git/production) with local fallback
+export const firebaseConfig = {
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) || rawConfig?.apiKey || '',
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || rawConfig?.authDomain || '',
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || rawConfig?.projectId || '',
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || rawConfig?.storageBucket || '',
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || rawConfig?.messagingSenderId || '',
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || rawConfig?.appId || '',
+  firestoreDatabaseId: (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID as string) || rawConfig?.firestoreDatabaseId || '',
+};
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Member, MemberStatus, FamilyRole } from '../types';
-import { X, CheckCircle2, AlertCircle, Save, Camera } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2 } from 'lucide-react';
 import { getAvailableKepalaKeluarga } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
 
@@ -33,6 +33,10 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
   const [status, setStatus] = useState<MemberStatus>(member?.status || 'disetujui');
   const [catatanPenolakan, setCatatanPenolakan] = useState(member?.catatanPenolakan || '');
   const [fotoUrl, setFotoUrl] = useState(member?.fotoUrl || '');
+  const [ktpUrl, setKtpUrl] = useState(member?.ktpUrl || '');
+  const [ktpName, setKtpName] = useState(member?.ktpName || '');
+  const [kkUrl, setKkUrl] = useState(member?.kkUrl || '');
+  const [kkName, setKkName] = useState(member?.kkName || '');
   const [error, setError] = useState<string | null>(null);
 
   const availableHeads = getAvailableKepalaKeluarga(allMembers).filter(h => h.id !== member?.id);
@@ -53,6 +57,24 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       setFotoUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDocumentUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'ktp' | 'kk') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      if (type === 'ktp') {
+        setKtpUrl(result);
+        setKtpName(file.name);
+      } else {
+        setKkUrl(result);
+        setKkName(file.name);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -101,6 +123,10 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
       email: email.trim() || undefined,
       regNumber: regNumber.trim() || undefined,
       fotoUrl,
+      ktpUrl: ktpUrl || undefined,
+      ktpName: ktpName || undefined,
+      kkUrl: kkUrl || undefined,
+      kkName: kkName || undefined,
       status,
       catatanPenolakan: status === 'ditolak' ? catatanPenolakan.trim() : undefined,
     });
@@ -294,6 +320,96 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
                 >
                   👧 Anak Putri (10 Thn)
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Dokumen Lampiran KTP & KK (Upload / Revisi) */}
+          <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
+            <span className="block text-xs font-bold text-gray-700 flex items-center gap-1.5">
+              <FileText className="w-4 h-4 text-[#0b5d34]" />
+              <span>Dokumen Lampiran KTP / KIA & Kartu Keluarga (KK)</span>
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* KTP / KIA */}
+              <div className="p-2.5 bg-white border border-gray-200 rounded-lg space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-gray-700">Foto KTP / KIA</span>
+                  {ktpUrl ? (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                      ✓ Ada
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400">Kosong</span>
+                  )}
+                </div>
+                {ktpUrl && (
+                  <div className="relative rounded overflow-hidden border border-gray-200 bg-stone-50 h-16 flex items-center justify-center">
+                    <img src={ktpUrl} alt="KTP" className="w-full h-full object-contain" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKtpUrl('');
+                        setKtpName('');
+                      }}
+                      className="absolute top-1 right-1 p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors cursor-pointer"
+                      title="Hapus"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <label className="flex items-center justify-center gap-1 py-1 px-2 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded text-[11px] font-semibold text-gray-700 cursor-pointer">
+                  <Upload className="w-3 h-3" />
+                  <span>{ktpUrl ? 'Ganti Foto KTP' : 'Unggah Foto KTP'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => handleDocumentUpload(e, 'ktp')}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Kartu Keluarga */}
+              <div className="p-2.5 bg-white border border-gray-200 rounded-lg space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-gray-700">Foto KK</span>
+                  {kkUrl ? (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                      ✓ Ada
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400">Kosong</span>
+                  )}
+                </div>
+                {kkUrl && (
+                  <div className="relative rounded overflow-hidden border border-gray-200 bg-stone-50 h-16 flex items-center justify-center">
+                    <img src={kkUrl} alt="KK" className="w-full h-full object-contain" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKkUrl('');
+                        setKkName('');
+                      }}
+                      className="absolute top-1 right-1 p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors cursor-pointer"
+                      title="Hapus"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                <label className="flex items-center justify-center gap-1 py-1 px-2 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded text-[11px] font-semibold text-gray-700 cursor-pointer">
+                  <Upload className="w-3 h-3" />
+                  <span>{kkUrl ? 'Ganti Foto KK' : 'Unggah Foto KK'}</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => handleDocumentUpload(e, 'kk')}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
           </div>

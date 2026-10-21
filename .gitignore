@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Sensitive Firebase configuration with Google API Key
+firebase-applet-config.json
+firebase_applet_config.json
+firebase-applet-config.local.json
+

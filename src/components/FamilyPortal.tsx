@@ -24,7 +24,10 @@ import {
   CheckCircle2, 
   Camera, 
   FileText,
-  Home
+  Home,
+  Upload,
+  Check,
+  Trash2
 } from 'lucide-react';
 
 interface FamilyPortalProps {
@@ -60,6 +63,10 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
   const [editNoHp, setEditNoHp] = useState(currentUserSession?.noHp || '');
   const [editEmail, setEditEmail] = useState(currentUserSession?.email || '');
   const [editFotoUrl, setEditFotoUrl] = useState(currentUserSession?.fotoUrl || '');
+  const [editKtpUrl, setEditKtpUrl] = useState(currentUserSession?.ktpUrl || '');
+  const [editKtpName, setEditKtpName] = useState(currentUserSession?.ktpName || '');
+  const [editKkUrl, setEditKkUrl] = useState(currentUserSession?.kkUrl || '');
+  const [editKkName, setEditKkName] = useState(currentUserSession?.kkName || '');
   const [editSuccessMessage, setEditSuccessMessage] = useState<string | null>(null);
 
   // Handle Login Warga
@@ -130,11 +137,15 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
       noHp: editNoHp.trim(),
       email: editEmail.trim() || undefined,
       fotoUrl: editFotoUrl || currentUserSession.fotoUrl,
+      ktpUrl: editKtpUrl || currentUserSession.ktpUrl,
+      ktpName: editKtpName || currentUserSession.ktpName,
+      kkUrl: editKkUrl || currentUserSession.kkUrl,
+      kkName: editKkName || currentUserSession.kkName,
     };
 
     onUpdateSelf(updated);
     setIsEditingSelf(false);
-    setEditSuccessMessage('Data profil berhasil diperbarui.');
+    setEditSuccessMessage('Data profil dan dokumen lampiran berhasil diperbarui.');
     setTimeout(() => setEditSuccessMessage(null), 4000);
   };
 
@@ -295,6 +306,10 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
               setEditNoHp(currentUserSession.noHp);
               setEditEmail(currentUserSession.email || '');
               setEditFotoUrl(currentUserSession.fotoUrl || '');
+              setEditKtpUrl(currentUserSession.ktpUrl || '');
+              setEditKtpName(currentUserSession.ktpName || '');
+              setEditKkUrl(currentUserSession.kkUrl || '');
+              setEditKkName(currentUserSession.kkName || '');
             }}
             className="py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
           >
@@ -303,10 +318,13 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
           </button>
         </div>
 
-        {/* Self Edit Form */}
+        {/* Self Edit Form with Documents Revision */}
         {isEditingSelf && (
-          <form onSubmit={handleSaveSelf} className="mt-4 pt-4 border-t border-gray-100 space-y-3">
-            <h4 className="text-xs font-bold text-gray-800">Ubah Data Diri Saya</h4>
+          <form onSubmit={handleSaveSelf} className="mt-4 pt-4 border-t border-gray-100 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-gray-800">Ubah Data Diri & Revisi Dokumen</h4>
+              <span className="text-[10px] text-gray-500 font-medium">Anda dapat memperbaiki foto dokumen KTP & KK</span>
+            </div>
             
             <div>
               <label className="block text-[11px] font-bold text-gray-600 mb-0.5">Nama Sesuai KTP</label>
@@ -352,29 +370,171 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
               </div>
             </div>
 
-            {/* Change Photo input */}
-            <div>
-              <label className="block text-[11px] font-bold text-gray-600 mb-1">Ganti Foto Diri / Pas Foto</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onload = () => setEditFotoUrl(reader.result as string);
-                    reader.readAsDataURL(file);
-                  }
-                }}
-                className="text-xs text-gray-600"
-              />
+            {/* Change Photo Diri input */}
+            <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-14 rounded-lg overflow-hidden bg-white border border-[#0b5d34] shrink-0">
+                  {editFotoUrl ? (
+                    <img src={editFotoUrl} alt="Foto Diri" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-400">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <span className="block text-[11px] font-bold text-gray-700 mb-1">Revisi / Ganti Foto Diri</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = () => setEditFotoUrl(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    className="text-xs text-gray-600"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tempat Upload / Revisi Foto KTP & KK */}
+            <div className="pt-1 space-y-2.5">
+              <span className="text-[11px] font-bold text-gray-800 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-[#0b5d34]" />
+                <span>Revisi / Perbaiki Lampiran Dokumen KTP & Kartu Keluarga (KK)</span>
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. Revisi Foto KTP / KIA */}
+                <div className="p-3 bg-white border border-gray-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-gray-700">Foto KTP / KIA</span>
+                    {editKtpUrl ? (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ✓ Terlampir
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                        Belum Ada
+                      </span>
+                    )}
+                  </div>
+
+                  {editKtpUrl && (
+                    <div className="relative rounded-lg overflow-hidden border border-gray-200 bg-stone-50 h-20 flex items-center justify-center">
+                      <img src={editKtpUrl} alt="KTP Lampiran" className="w-full h-full object-contain" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditKtpUrl('');
+                          setEditKtpName('');
+                        }}
+                        className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-2xs cursor-pointer"
+                        title="Hapus / Reset Foto KTP"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  <label className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded-lg text-[11px] font-semibold text-gray-700 cursor-pointer transition-colors">
+                    <Upload className="w-3 h-3" />
+                    <span>{editKtpUrl ? 'Ganti / Unggah KTP Baru' : 'Unggah Foto KTP / KIA'}</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setEditKtpUrl(reader.result as string);
+                            setEditKtpName(file.name);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                  {editKtpName && (
+                    <div className="text-[10px] text-gray-500 truncate font-mono">
+                      Berkas: {editKtpName}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Revisi Foto Kartu Keluarga (KK) */}
+                <div className="p-3 bg-white border border-gray-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-gray-700">Foto Kartu Keluarga (KK)</span>
+                    {editKkUrl ? (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        ✓ Terlampir
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                        Belum Ada
+                      </span>
+                    )}
+                  </div>
+
+                  {editKkUrl && (
+                    <div className="relative rounded-lg overflow-hidden border border-gray-200 bg-stone-50 h-20 flex items-center justify-center">
+                      <img src={editKkUrl} alt="KK Lampiran" className="w-full h-full object-contain" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditKkUrl('');
+                          setEditKkName('');
+                        }}
+                        className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-2xs cursor-pointer"
+                        title="Hapus / Reset Foto KK"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  <label className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded-lg text-[11px] font-semibold text-gray-700 cursor-pointer transition-colors">
+                    <Upload className="w-3 h-3" />
+                    <span>{editKkUrl ? 'Ganti / Unggah KK Baru' : 'Unggah Foto KK'}</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setEditKkUrl(reader.result as string);
+                            setEditKkName(file.name);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                  {editKkName && (
+                    <div className="text-[10px] text-gray-500 truncate font-mono">
+                      Berkas: {editKkName}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <button
               type="submit"
-              className="w-full py-2.5 px-3 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              className="w-full py-3 px-3 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
             >
-              Simpan Perubahan Profil
+              <Check className="w-4 h-4" />
+              <span>Simpan Perubahan Profil & Dokumen</span>
             </button>
           </form>
         )}
