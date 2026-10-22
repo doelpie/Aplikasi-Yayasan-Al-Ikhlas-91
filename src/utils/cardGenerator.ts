@@ -1,6 +1,7 @@
 import { Member } from '../types';
 import { formatIndonesianDate, getInitials, getPeranLabel } from './storage';
 import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 
 /**
  * Renders high-resolution Canvas of the Member Card
@@ -192,6 +193,52 @@ export async function renderCardCanvas(member: Member): Promise<HTMLCanvasElemen
   ctx.fillStyle = '#6b7280';
   ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
   ctx.fillText('NO. HP / WHATSAPP: ' + (member.noHp || '-'), contentX, currentY);
+
+  // 7. QR CODE FOR ABSENSI KEGIATAN YAYASAN (Right Box)
+  try {
+    const qrPayload = `ALIKHLAS:${member.id}:${member.nik}`;
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      width: 140,
+      margin: 1,
+      color: {
+        dark: '#0b5d34',
+        light: '#ffffff',
+      },
+    });
+
+    const qrImg = new Image();
+    await new Promise<void>((resolve, reject) => {
+      qrImg.onload = () => resolve();
+      qrImg.onerror = () => reject();
+      qrImg.src = qrDataUrl;
+    });
+
+    const qrX = width - 180;
+    const qrY = 175;
+    const qrBoxW = 125;
+    const qrBoxH = 145;
+
+    // QR Box container with green border
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(qrX, qrY, qrBoxW, qrBoxH);
+    ctx.strokeStyle = '#0b5d34';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(qrX, qrY, qrBoxW, qrBoxH);
+
+    // Draw QR image
+    ctx.drawImage(qrImg, qrX + 5, qrY + 5, qrBoxW - 10, qrBoxW - 10);
+
+    // QR Label footer
+    ctx.fillStyle = '#0b5d34';
+    ctx.fillRect(qrX, qrY + qrBoxW, qrBoxW, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('SCAN ABSEN', qrX + qrBoxW / 2, qrY + qrBoxW + 14);
+    ctx.textAlign = 'left';
+  } catch (err) {
+    console.warn('QR Code generation error on canvas:', err);
+  }
 
   // Footer separator
   ctx.strokeStyle = '#e2e8f0';

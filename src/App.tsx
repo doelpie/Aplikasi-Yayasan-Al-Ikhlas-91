@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Member, AppNotification, BroadcastMessage } from './types';
+import { Member, AppNotification, BroadcastMessage, Activity, ActivityAttendee } from './types';
 import { 
   getStoredMembers, 
   saveMembers, 
@@ -14,7 +14,12 @@ import {
   resetToInitialData,
   requestNotificationPermission,
   getCurrentUserSession,
-  setCurrentUserSession 
+  setCurrentUserSession,
+  getStoredActivities,
+  addNewActivity,
+  updateActivity,
+  deleteActivity,
+  recordAttendance
 } from './utils/storage';
 import { soundEffects } from './utils/sound';
 import { Header } from './components/Header';
@@ -46,6 +51,7 @@ export default function App() {
 
   // Data State
   const [members, setMembers] = useState<Member[]>(() => getStoredMembers());
+  const [activities, setActivities] = useState<Activity[]>(() => getStoredActivities());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotifications());
 
   // Modals & Popups State
@@ -130,6 +136,7 @@ export default function App() {
         const refreshed = getStoredMembers();
         setMembers(refreshed);
         setNotifications(getStoredNotifications());
+        setActivities(getStoredActivities());
         const freshUser = getCurrentUserSession();
         setSessionMember(freshUser);
       }
@@ -221,7 +228,7 @@ export default function App() {
     setMembers(getStoredMembers());
   };
 
-  // Handlers for Admin
+  // Handlers for Admin - Member Management
   const handleApprove = (memberId: string) => {
     const { updatedMember, notification } = updateMemberStatus(memberId, 'disetujui');
     if (updatedMember) {
@@ -277,12 +284,49 @@ export default function App() {
   const handleResetData = () => {
     if (window.confirm('Kembalikan semua data ke data awal Yayasan Al Ikhlas Sembilan Satu?')) {
       resetToInitialData();
+      setMembers(getStoredMembers());
+      setActivities(getStoredActivities());
     }
   };
 
   const handleMarkAllRead = () => {
     markAllNotificationsAsRead();
     setNotifications(getStoredNotifications());
+  };
+
+  // Handlers for Activities (Kegiatan Yayasan)
+  const handleAddNewActivity = (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>) => {
+    const created = addNewActivity(data);
+    setActivities(getStoredActivities());
+    return created;
+  };
+
+  const handleUpdateActivity = (updated: Activity) => {
+    updateActivity(updated);
+    setActivities(getStoredActivities());
+  };
+
+  const handleDeleteActivity = (id: string) => {
+    const act = activities.find(a => a.id === id);
+    if (window.confirm(`Apakah Anda yakin ingin menghapus kegiatan "${act?.judul || id}"?`)) {
+      deleteActivity(id);
+      setActivities(getStoredActivities());
+    }
+  };
+
+  const handleRecordAttendance = (
+    activityId: string, 
+    member: Member, 
+    forceAddToPeserta: boolean
+  ) => {
+    const result = recordAttendance(activityId, member, forceAddToPeserta);
+    setActivities(getStoredActivities());
+    return result;
+  };
+
+  const handleManualCheckIn = (activityId: string, member: Member) => {
+    recordAttendance(activityId, member, true);
+    setActivities(getStoredActivities());
   };
 
   return (
@@ -302,6 +346,7 @@ export default function App() {
         isAdminLoggedIn ? (
           <AdminDashboard
             members={members}
+            activities={activities}
             notifications={notifications}
             onApprove={handleApprove}
             onReject={handleReject}
@@ -316,6 +361,11 @@ export default function App() {
             }}
             onResetData={handleResetData}
             onOpenNotifications={() => setIsOpenNotifDrawer(true)}
+            onAddNewActivity={handleAddNewActivity}
+            onUpdateActivity={handleUpdateActivity}
+            onDeleteActivity={handleDeleteActivity}
+            onRecordAttendance={handleRecordAttendance}
+            onManualCheckIn={handleManualCheckIn}
           />
         ) : (
           <AdminLogin

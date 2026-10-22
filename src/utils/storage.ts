@@ -1,4 +1,4 @@
-import { Member, AppNotification, BroadcastMessage, MemberStatus, FamilyRole } from '../types';
+import { Member, AppNotification, BroadcastMessage, MemberStatus, FamilyRole, Activity, ActivityType, ActivityAttendee } from '../types';
 import { INITIAL_MEMBERS } from '../data/initialData';
 import { soundEffects } from './sound';
 import { SYARI_PHOTOS } from '../data/initialData';
@@ -12,6 +12,7 @@ import {
 const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
 const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
 const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
+const STORAGE_ACTIVITIES_KEY = 'yayasan_alikhlas_activities_v1';
 const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
 
 let channel: BroadcastChannel | null = null;
@@ -469,3 +470,215 @@ export function formatIndonesianDate(isoOrDateString?: string): string {
     year: 'numeric',
   });
 }
+
+// ==========================================
+// MANAJEMEN KEGIATAN & PRESENSI SCAN QR
+// ==========================================
+
+export const INITIAL_ACTIVITIES: Activity[] = [
+  {
+    id: 'ACT-2026-001',
+    judul: 'Rapat Pleno Pengurus Yayasan Triwulan IV',
+    jenis: 'rapat_pengurus',
+    tanggal: '2026-10-25',
+    jamMulai: '19:30',
+    jamSelesai: '22:00',
+    lokasi: 'Aula Utama Gedung Yayasan Al Ikhlas Sembilan Satu Dalung',
+    deskripsi: 'Evaluasi program kerja semester berjalan, laporan keuangan yayasan, dan pembahasan persiapan haul akbar.',
+    pesertaIds: ['0114', '0115', '0116'],
+    kehadiran: [
+      {
+        memberId: '0114',
+        memberNama: 'Margo Suwito Utomo',
+        memberNik: '5103051205780001',
+        memberPeran: 'kepala_keluarga',
+        scanTimestamp: '2026-10-25T19:25:00.000Z',
+        scanTimeFormatted: '19:25 WITA',
+        activityId: 'ACT-2026-001',
+        activityTitle: 'Rapat Pleno Pengurus Yayasan Triwulan IV',
+        activityType: 'rapat_pengurus',
+      }
+    ],
+    createdAt: '2026-10-20T08:00:00.000Z',
+    updatedAt: '2026-10-20T08:00:00.000Z',
+  },
+  {
+    id: 'ACT-2026-002',
+    judul: 'Pengajian Rutin Bulanan & Doa Bersama Warga',
+    jenis: 'pengajian_umum',
+    tanggal: '2026-10-28',
+    jamMulai: '18:30',
+    jamSelesai: '21:00',
+    lokasi: 'Masjid Al Ikhlas Dalung Permai',
+    deskripsi: 'Kajian kitab Riyadhus Shalihin bersama Ustadz dan ramah tamah seluruh keluarga anggota Yayasan.',
+    pesertaIds: ['0114', '0114-1', '0114-2', '0115', '0115-1', '0116'],
+    kehadiran: [],
+    createdAt: '2026-10-21T09:00:00.000Z',
+    updatedAt: '2026-10-21T09:00:00.000Z',
+  },
+  {
+    id: 'ACT-2026-003',
+    judul: 'Arisan Silaturahmi Bulanan Keluarga Al Ikhlas',
+    jenis: 'arisan',
+    tanggal: '2026-11-05',
+    jamMulai: '16:00',
+    jamSelesai: '18:00',
+    lokasi: 'Kediaman Bpk. Margo Suwito Utomo, Perum Kodam Blok G No. 3',
+    deskripsi: 'Pertemuan silaturahmi berkala, penarikan arisan putaran November, dan diskusi santai keluarga.',
+    pesertaIds: ['0114', '0114-1', '0115', '0115-1', '0116'],
+    kehadiran: [],
+    createdAt: '2026-10-21T10:00:00.000Z',
+    updatedAt: '2026-10-21T10:00:00.000Z',
+  }
+];
+
+export function getStoredActivities(): Activity[] {
+  if (typeof window === 'undefined') return INITIAL_ACTIVITIES;
+  try {
+    const raw = localStorage.getItem(STORAGE_ACTIVITIES_KEY);
+    if (!raw) {
+      localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(INITIAL_ACTIVITIES));
+      return INITIAL_ACTIVITIES;
+    }
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Error reading activities from localStorage:', err);
+    return INITIAL_ACTIVITIES;
+  }
+}
+
+export function saveActivities(activities: Activity[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(activities));
+    broadcastRealtime({
+      type: 'DATA_SYNC',
+      payload: { member: {} as any },
+    });
+  } catch (err) {
+    console.error('Error saving activities to localStorage:', err);
+  }
+}
+
+export function addNewActivity(
+  data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>
+): Activity {
+  const activities = getStoredActivities();
+  const nextNum = activities.length + 1;
+  const newId = `ACT-2026-${String(nextNum).padStart(3, '0')}`;
+  const now = new Date().toISOString();
+
+  const newActivity: Activity = {
+    ...data,
+    id: newId,
+    kehadiran: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  activities.unshift(newActivity);
+  saveActivities(activities);
+  return newActivity;
+}
+
+export function updateActivity(updated: Activity): void {
+  const activities = getStoredActivities();
+  const idx = activities.findIndex(a => a.id === updated.id);
+  if (idx !== -1) {
+    activities[idx] = {
+      ...updated,
+      updatedAt: new Date().toISOString(),
+    };
+    saveActivities(activities);
+  }
+}
+
+export function deleteActivity(id: string): void {
+  const activities = getStoredActivities();
+  const filtered = activities.filter(a => a.id !== id);
+  saveActivities(filtered);
+}
+
+/**
+ * Mencatat kehadiran anggota pada kegiatan tertentu.
+ * Jika anggota belum masuk pesertaIds, autoAdd to pesertaIds jika dikonfirmasi.
+ */
+export function recordAttendance(
+  activityId: string, 
+  member: Member, 
+  forceAddToPeserta: boolean = false
+): { success: boolean; alreadyAttended: boolean; isNewToPeserta: boolean; attendee?: ActivityAttendee; error?: string } {
+  const activities = getStoredActivities();
+  const activity = activities.find(a => a.id === activityId);
+  if (!activity) {
+    return { success: false, alreadyAttended: false, isNewToPeserta: false, error: 'Kegiatan tidak ditemukan.' };
+  }
+
+  // Cek apakah sudah pernah scan hadir
+  const already = activity.kehadiran.some(k => k.memberId === member.id);
+  if (already) {
+    return { success: false, alreadyAttended: true, isNewToPeserta: false, error: 'Anggota sudah tercatat hadir pada kegiatan ini.' };
+  }
+
+  const isAlreadyInPeserta = activity.pesertaIds.includes(member.id);
+  let isNewToPeserta = false;
+
+  if (!isAlreadyInPeserta) {
+    if (!forceAddToPeserta) {
+      // Perlu konfirmasi admin
+      return { success: false, alreadyAttended: false, isNewToPeserta: true, error: 'NOT_IN_PESERTA_NEED_CONFIRMATION' };
+    } else {
+      activity.pesertaIds.push(member.id);
+      isNewToPeserta = true;
+    }
+  }
+
+  const now = new Date();
+  const timeFormatted = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA';
+
+  const attendee: ActivityAttendee = {
+    memberId: member.id,
+    memberNama: member.nama,
+    memberNik: member.nik,
+    memberPeran: member.peranKeluarga,
+    memberFotoUrl: member.fotoUrl,
+    scanTimestamp: now.toISOString(),
+    scanTimeFormatted: timeFormatted,
+    activityId: activity.id,
+    activityTitle: activity.judul,
+    activityType: activity.jenis,
+  };
+
+  activity.kehadiran.unshift(attendee);
+  activity.updatedAt = now.toISOString();
+
+  saveActivities(activities);
+  return { success: true, alreadyAttended: false, isNewToPeserta, attendee };
+}
+
+export function getActivityTypeLabel(jenis: ActivityType): string {
+  switch (jenis) {
+    case 'rapat_pengurus':
+      return 'Rapat Pengurus';
+    case 'pengajian_umum':
+      return 'Pengajian Umum';
+    case 'arisan':
+      return 'Arisan';
+    default:
+      return jenis;
+  }
+}
+
+export function getActivityTypeBadgeClass(jenis: ActivityType): { bg: string; text: string; border: string } {
+  switch (jenis) {
+    case 'rapat_pengurus':
+      return { bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-200' };
+    case 'pengajian_umum':
+      return { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' };
+    case 'arisan':
+      return { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' };
+    default:
+      return { bg: 'bg-gray-50', text: 'text-gray-800', border: 'border-gray-200' };
+  }
+}
+

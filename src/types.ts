@@ -60,3 +60,37 @@ export interface UserSession {
   member: Member;
   isLoggedIn: boolean;
 }
+
+// Jenis Kegiatan Yayasan Al Ikhlas
+export type ActivityType = 'rapat_pengurus' | 'pengajian_umum' | 'arisan';
+
+// Data Anggota yang Hadir (Presensi Scan QR)
+export interface ActivityAttendee {
+  memberId: string;
+  memberNama: string;
+  memberNik: string;
+  memberPeran: string;
+  memberFotoUrl?: string;
+  scanTimestamp: string; // ISO date string
+  scanTimeFormatted: string; // e.g., '19:45 WITA'
+  activityId: string;
+  activityTitle: string;
+  activityType: ActivityType;
+}
+
+// Data Kegiatan Yayasan
+export interface Activity {
+  id: string; // e.g., 'ACT-2026-001'
+  judul: string;
+  jenis: ActivityType;
+  tanggal: string; // YYYY-MM-DD
+  jamMulai: string; // HH:mm
+  jamSelesai?: string; // HH:mm
+  lokasi?: string;
+  deskripsi: string;
+  pesertaIds: string[]; // Daftar ID Anggota yang terdaftar sebagai peserta
+  kehadiran: ActivityAttendee[]; // Daftar presensi anggota yang hadir scan QR
+  createdAt: string;
+  updatedAt: string;
+}
+

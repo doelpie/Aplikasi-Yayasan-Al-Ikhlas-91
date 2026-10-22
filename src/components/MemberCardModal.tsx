@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Member } from '../types';
 import { getInitials, formatIndonesianDate, getPeranLabel } from '../utils/storage';
 import { downloadMemberCardImage, downloadMemberCardPdf } from '../utils/cardGenerator';
-import { Download, Printer, X, CheckCircle, FileDown } from 'lucide-react';
+import { Download, Printer, X, CheckCircle, FileDown, QrCode } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import QRCode from 'qrcode';
 
 interface MemberCardModalProps {
   member: Member;
@@ -18,8 +19,24 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
 }) => {
   const [isDownloadingPng, setIsDownloadingPng] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
 
-  React.useEffect(() => {
+  useEffect(() => {
+    // Generate QR Code containing ID Anggota & NIK for Kegiatan attendance
+    const payload = `ALIKHLAS:${member.id}:${member.nik}`;
+    QRCode.toDataURL(payload, {
+      width: 160,
+      margin: 1,
+      color: {
+        dark: '#0b5d34',
+        light: '#ffffff',
+      },
+    })
+      .then(setQrCodeUrl)
+      .catch((err) => console.warn('QR Code generation error:', err));
+  }, [member.id, member.nik]);
+
+  useEffect(() => {
     if (showCelebration) {
       try {
         confetti({
@@ -209,7 +226,30 @@ export const MemberCardModal: React.FC<MemberCardModalProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* Mobile QR Code Box */}
+                {qrCodeUrl && (
+                  <div className="sm:hidden flex items-center gap-2.5 p-2 bg-emerald-50/70 rounded-xl border border-emerald-200 mt-2">
+                    <img src={qrCodeUrl} alt="QR Code" className="w-12 h-12 bg-white p-0.5 rounded-lg border border-emerald-300 object-contain shrink-0" />
+                    <div>
+                      <span className="text-[10px] font-bold text-[#0b5d34] block">QR Code Absensi Kegiatan</span>
+                      <span className="text-[9px] text-gray-600 leading-tight block">Gunakan untuk scan hadir saat acara resmi yayasan</span>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* Desktop / Print QR Code Frame (Right side) */}
+              {qrCodeUrl && (
+                <div className="hidden sm:flex flex-col items-center justify-center p-2 rounded-xl border border-[#0b5d34]/30 bg-emerald-50/40 shrink-0 self-start mt-0.5">
+                  <div className="w-20 h-20 bg-white p-1 rounded-lg border border-emerald-200 shadow-2xs flex items-center justify-center">
+                    <img src={qrCodeUrl} alt="QR Code Presensi" className="w-full h-full object-contain" />
+                  </div>
+                  <span className="text-[9px] font-bold text-[#0b5d34] uppercase tracking-wider mt-1.5 text-center">
+                    Scan Absen
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* CARD FOOTER */}

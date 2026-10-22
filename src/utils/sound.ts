@@ -98,6 +98,19 @@ class SoundEffects {
       console.warn('Audio ping failed:', e);
     }
   }
+
+  // Aliases for convenience
+  success() {
+    this.playSuccess();
+  }
+
+  warning() {
+    this.playWarning();
+  }
+
+  click() {
+    this.playPing();
+  }
 }
 
 export const soundEffects = new SoundEffects();
