@@ -120,6 +120,8 @@ export function setCurrentUserSession(member: Member | null): void {
   }
 }
 
+import { compressImage } from './imageCompressor';
+
 export function addNotification(notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>): AppNotification {
   const all = getStoredNotifications();
   const newNotif: AppNotification = {
@@ -135,6 +137,29 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
   addNotificationToFirestore(newNotif).catch(err => {
     console.warn('Firestore notification sync note:', err);
   });
+
+  return newNotif;
+}
+
+export async function addNotificationAsync(
+  notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>
+): Promise<AppNotification> {
+  const all = getStoredNotifications();
+  const newNotif: AppNotification = {
+    ...notification,
+    id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    timestamp: new Date().toISOString(),
+    read: false,
+  };
+  const updated = [newNotif, ...all.slice(0, 49)];
+  saveNotifications(updated);
+  
+  // Persist to Firebase Firestore
+  try {
+    await addNotificationToFirestore(newNotif);
+  } catch (err) {
+    console.warn('Firestore notification async warning:', err);
+  }
 
   return newNotif;
 }
@@ -288,32 +313,61 @@ export function updateMemberStatus(
   return { updatedMember, notification };
 }
 
-export function addNewMember(
+export async function addNewMemberAsync(
   data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
-): Member {
+): Promise<Member> {
   const members = getStoredMembers();
   
-  // Generate ID e.g. '0120'
+  // Generate non-colliding ID e.g. '0120'
   const maxNum = members.reduce((max, m) => {
     const root = m.id.split('-')[0];
     const num = parseInt(root, 10);
     return !isNaN(num) && num > max ? num : max;
   }, 118);
 
-  let nextId = String(maxNum + 1).padStart(4, '0');
+  let nextNum = maxNum + 1;
+  let nextId = String(nextNum).padStart(4, '0');
   
   // If family member added to existing head of family
   if (data.kepalaKeluargaId) {
     const existingFamilyCount = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
-    nextId = `${data.kepalaKeluargaId}-${existingFamilyCount}`;
+    nextId = `${data.kepalaKeluargaId}-${existingFamilyCount + 1}`;
+  }
+
+  // Ensure nextId does not collide with existing member
+  while (members.some(m => m.id === nextId)) {
+    nextNum++;
+    nextId = String(nextNum).padStart(4, '0');
   }
 
   const now = new Date().toISOString();
   const initialStatus = data.status || 'menunggu';
 
+  // Compress images to lightweight JPEG data URLs (< 80KB each) to prevent Firestore 1MB limits
+  let compressedFoto = data.fotoUrl;
+  let compressedKtp = data.ktpUrl;
+  let compressedKk = data.kkUrl;
+
+  try {
+    if (data.fotoUrl) {
+      compressedFoto = await compressImage(data.fotoUrl, { maxDimension: 600, quality: 0.72 });
+    }
+    if (data.ktpUrl) {
+      compressedKtp = await compressImage(data.ktpUrl, { maxDimension: 800, quality: 0.75 });
+    }
+    if (data.kkUrl) {
+      compressedKk = await compressImage(data.kkUrl, { maxDimension: 800, quality: 0.75 });
+    }
+  } catch (compErr) {
+    console.warn('Image compression note during registration:', compErr);
+  }
+
   const newMember: Member = {
     ...data,
     id: nextId,
+    fotoUrl: compressedFoto,
+    ktpUrl: compressedKtp,
+    kkUrl: compressedKk,
     status: initialStatus,
     tanggalDaftar: now,
     tanggalDisetujui: initialStatus === 'disetujui' ? now : undefined,
@@ -324,18 +378,31 @@ export function addNewMember(
     newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
   }
 
-  const updated = [newMember, ...members];
-  saveMembers(updated);
+  // CRITICAL REQUIREMENT: SAVE TO DATABASE FIRST. ONLY IF SUCCESSFUL, CREATE NOTIFICATION.
+  try {
+    await saveMemberToFirestore(newMember);
+  } catch (dbErr: any) {
+    console.error('CRITICAL: Failed to write member to Firestore database:', dbErr);
+    let errMsg = 'Gagal menyimpan pendaftaran ke database server.';
+    if (dbErr?.message?.includes('the client is offline') || dbErr?.message?.includes('unavailable')) {
+      errMsg = 'Koneksi ke database server terputus atau perangkat sedang offline. Mohon periksa koneksi internet Anda.';
+    } else if (dbErr?.message?.includes('exceeds the limit')) {
+      errMsg = 'Ukuran lampiran foto terlalu besar. Silakan gunakan foto yang berukuran wajar.';
+    } else if (dbErr?.message) {
+      errMsg = `Gagal menyimpan ke database server: ${dbErr.message}`;
+    }
+    throw new Error(errMsg);
+  }
 
-  // Persist to Firebase Firestore
-  saveMemberToFirestore(newMember).catch(err => {
-    console.warn('Firestore add member sync note:', err);
-  });
+  // DATABASE WRITE SUCCEEDED - NOW UPDATE LOCAL STATE & SEND NOTIFICATION
+  const freshMembers = getStoredMembers();
+  const updated = [newMember, ...freshMembers.filter(m => m.id !== newMember.id)];
+  saveMembers(updated);
 
   soundEffects.playPing();
 
   const roleText = getPeranLabel(newMember.peranKeluarga);
-  const notification = addNotification({
+  const notification = await addNotificationAsync({
     memberId: newMember.id,
     memberName: newMember.nama,
     type: 'new_registration',
@@ -355,6 +422,93 @@ export function addNewMember(
   return newMember;
 }
 
+export function addNewMember(
+  data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
+): Member {
+  // Sync fallback wrapper that also launches async save
+  const members = getStoredMembers();
+  const maxNum = members.reduce((max, m) => {
+    const root = m.id.split('-')[0];
+    const num = parseInt(root, 10);
+    return !isNaN(num) && num > max ? num : max;
+  }, 118);
+
+  let nextId = String(maxNum + 1).padStart(4, '0');
+  if (data.kepalaKeluargaId) {
+    const count = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
+    nextId = `${data.kepalaKeluargaId}-${count + 1}`;
+  }
+
+  const now = new Date().toISOString();
+  const initialStatus = data.status || 'menunggu';
+
+  const newMember: Member = {
+    ...data,
+    id: nextId,
+    status: initialStatus,
+    tanggalDaftar: now,
+    tanggalDisetujui: initialStatus === 'disetujui' ? now : undefined,
+  };
+
+  if (data.peranKeluarga === 'kepala_keluarga') {
+    newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
+  }
+
+  saveMembers([newMember, ...members]);
+  saveMemberToFirestore(newMember).catch(err => console.warn('Sync write error:', err));
+  return newMember;
+}
+
+export async function updateMemberAsync(updatedMember: Member): Promise<Member> {
+  let compressedFoto = updatedMember.fotoUrl;
+  let compressedKtp = updatedMember.ktpUrl;
+  let compressedKk = updatedMember.kkUrl;
+
+  try {
+    if (updatedMember.fotoUrl && updatedMember.fotoUrl.startsWith('data:image')) {
+      compressedFoto = await compressImage(updatedMember.fotoUrl, { maxDimension: 600, quality: 0.72 });
+    }
+    if (updatedMember.ktpUrl && updatedMember.ktpUrl.startsWith('data:image')) {
+      compressedKtp = await compressImage(updatedMember.ktpUrl, { maxDimension: 800, quality: 0.75 });
+    }
+    if (updatedMember.kkUrl && updatedMember.kkUrl.startsWith('data:image')) {
+      compressedKk = await compressImage(updatedMember.kkUrl, { maxDimension: 800, quality: 0.75 });
+    }
+  } catch (err) {
+    console.warn('Image compression warning on update:', err);
+  }
+
+  const finalMember: Member = {
+    ...updatedMember,
+    fotoUrl: compressedFoto,
+    ktpUrl: compressedKtp,
+    kkUrl: compressedKk,
+  };
+
+  await saveMemberToFirestore(finalMember);
+
+  const members = getStoredMembers();
+  const index = members.findIndex(m => m.id === finalMember.id);
+  if (index !== -1) {
+    members[index] = finalMember;
+    saveMembers(members);
+  } else {
+    saveMembers([finalMember, ...members]);
+  }
+
+  const currentSession = getCurrentUserSession();
+  if (currentSession && currentSession.id === finalMember.id) {
+    setCurrentUserSession(finalMember);
+  }
+
+  broadcastRealtime({
+    type: 'DATA_SYNC',
+    payload: { member: finalMember },
+  });
+
+  return finalMember;
+}
+
 export function updateMember(updatedMember: Member): void {
   const members = getStoredMembers();
   const index = members.findIndex(m => m.id === updatedMember.id);
@@ -362,12 +516,10 @@ export function updateMember(updatedMember: Member): void {
     members[index] = updatedMember;
     saveMembers(members);
 
-    // Persist to Firebase Firestore
     saveMemberToFirestore(updatedMember).catch(err => {
       console.warn('Firestore update member sync note:', err);
     });
 
-    // If session matches updated member, sync session
     const currentSession = getCurrentUserSession();
     if (currentSession && currentSession.id === updatedMember.id) {
       setCurrentUserSession(updatedMember);

@@ -17,7 +17,8 @@ import {
   Users,
   Camera,
   CalendarDays,
-  QrCode
+  QrCode,
+  AlertCircle
 } from 'lucide-react';
 import { getPeranLabel, getInitials } from '../utils/storage';
 import { ActivityManagement } from './ActivityManagement';
@@ -110,6 +111,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
     return list;
   }, [members, statusFilter, roleFilter, searchTerm]);
+
+  // Unmatched registration notifications (historical registrations where uncompressed photos exceeded Firestore limit on old versions)
+  const unmatchedRegistrations = useMemo(() => {
+    return notifications.filter(n => {
+      if (n.type !== 'new_registration') return false;
+      const matchFound = members.some(m => 
+        m.id === n.memberId || 
+        m.nama.toLowerCase().trim() === n.memberName.toLowerCase().trim()
+      );
+      return !matchFound;
+    });
+  }, [notifications, members]);
 
   // Open WhatsApp with friendly pre-filled text
   const handleOpenWhatsApp = (member: Member) => {
@@ -339,6 +352,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Informational Banner if there are historical notifications without matching member documents */}
+            {unmatchedRegistrations.length > 0 && (
+              <div className="mt-4 bg-amber-50 border border-amber-300 rounded-2xl p-3.5 text-xs text-amber-900 flex items-start gap-3 shadow-xs">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <div className="font-bold text-amber-950 flex items-center justify-between">
+                    <span>Catatan Sinkronisasi Notifikasi Pendaftaran ({unmatchedRegistrations.length})</span>
+                    <span className="text-[10px] font-semibold bg-amber-200/80 px-2 py-0.5 rounded-full text-amber-900">
+                      Perlu Perhatian
+                    </span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-800">
+                    Terdapat {unmatchedRegistrations.length} nama dalam notifikasi ({unmatchedRegistrations.map(u => u.memberName).slice(0, 3).join(', ')}{unmatchedRegistrations.length > 3 ? '...' : ''}) yang belum tersimpan ke daftar anggota karena berkas foto dari perangkat pengguna berukuran sangat besar pada sistem lama.
+                    Sistem kompresi &amp; validasi otomatis telah diperbaiki sehingga pendaftaran baru dipastikan 100% tersimpan ke database sebelum notifikasi diterbitkan.
+                  </p>
+                  <div className="pt-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={onAddMember}
+                      className="inline-flex items-center gap-1 px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-xl text-[11px] cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Input Anggota Manual</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Search Bar */}
             <div className="mt-4 relative">

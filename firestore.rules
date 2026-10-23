@@ -17,23 +17,23 @@ service cloud.firestore {
 
     function isValidMember(data) {
       return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
-             data.nik is string && data.nik.size() > 0 && data.nik.size() <= 30 &&
-             data.nama is string && data.nama.size() > 0 && data.nama.size() <= 150 &&
-             data.alamat is string && data.alamat.size() > 0 && data.alamat.size() <= 500 &&
-             data.noHp is string && data.noHp.size() > 0 && data.noHp.size() <= 30 &&
-             data.noKk is string && data.noKk.size() > 0 && data.noKk.size() <= 30 &&
+             data.nik is string && data.nik.size() > 0 && data.nik.size() <= 50 &&
+             data.nama is string && data.nama.size() > 0 && data.nama.size() <= 250 &&
+             data.alamat is string && data.alamat.size() > 0 && data.alamat.size() <= 1000 &&
+             data.noHp is string && data.noHp.size() > 0 && data.noHp.size() <= 50 &&
+             data.noKk is string && data.noKk.size() > 0 && data.noKk.size() <= 50 &&
              data.peranKeluarga in ['kepala_keluarga', 'istri', 'anak'] &&
              data.status in ['menunggu', 'disetujui', 'ditolak'] &&
-             data.tanggalDaftar is string && data.tanggalDaftar.size() <= 50;
+             data.tanggalDaftar is string && data.tanggalDaftar.size() <= 100;
     }
 
     function isValidNotification(data) {
       return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
              data.memberId is string && data.memberId.size() <= 64 &&
-             data.memberName is string && data.memberName.size() <= 150 &&
+             data.memberName is string && data.memberName.size() <= 250 &&
              data.type in ['status_approved', 'status_rejected', 'new_registration', 'data_updated'] &&
-             data.message is string && data.message.size() <= 500 &&
-             data.timestamp is string && data.timestamp.size() <= 50 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.timestamp is string && data.timestamp.size() <= 100 &&
              data.read is bool;
     }
 
@@ -63,6 +63,13 @@ service cloud.firestore {
       allow create: if isValidId(notificationId) && isValidNotification(incoming());
       allow update: if isValidId(notificationId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']) && incoming().read is bool;
       allow delete: if isValidId(notificationId);
+    }
+
+    // Koleksi Kegiatan Yayasan
+    match /activities/{activityId} {
+      allow get: if isValidId(activityId);
+      allow list: if true;
+      allow create, update, delete: if isValidId(activityId);
     }
   }
 }

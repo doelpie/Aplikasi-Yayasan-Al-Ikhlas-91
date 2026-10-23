@@ -30,6 +30,8 @@ import {
   Trash2
 } from 'lucide-react';
 
+import { compressImage } from '../utils/imageCompressor';
+
 interface FamilyPortalProps {
   currentUserSession: Member | null;
   allMembers: Member[];
@@ -360,12 +362,16 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-gray-600 mb-0.5">Email</label>
+                <label className="block text-[11px] font-bold text-gray-600 mb-0.5 flex items-center justify-between">
+                  <span>Alamat Email</span>
+                  <span className="text-[9px] text-emerald-700 font-normal">Dapat diedit</span>
+                </label>
                 <input
                   type="email"
                   value={editEmail}
                   onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs"
+                  placeholder="email@anda.com"
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0b5d34]"
                 />
               </div>
             </div>
@@ -387,12 +393,17 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => setEditFotoUrl(reader.result as string);
-                        reader.readAsDataURL(file);
+                        try {
+                          const compressed = await compressImage(file, { maxDimension: 600, quality: 0.72 });
+                          setEditFotoUrl(compressed);
+                        } catch {
+                          const reader = new FileReader();
+                          reader.onload = () => setEditFotoUrl(reader.result as string);
+                          reader.readAsDataURL(file);
+                        }
                       }
                     }}
                     className="text-xs text-gray-600"
@@ -446,16 +457,22 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                     <span>{editKtpUrl ? 'Ganti / Unggah KTP Baru' : 'Unggah Foto KTP / KIA'}</span>
                     <input
                       type="file"
-                      accept="image/*,application/pdf"
-                      onChange={(e) => {
+                      accept="image/*"
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = () => {
-                            setEditKtpUrl(reader.result as string);
+                          try {
+                            const compressed = await compressImage(file, { maxDimension: 800, quality: 0.75 });
+                            setEditKtpUrl(compressed);
                             setEditKtpName(file.name);
-                          };
-                          reader.readAsDataURL(file);
+                          } catch {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              setEditKtpUrl(reader.result as string);
+                              setEditKtpName(file.name);
+                            };
+                            reader.readAsDataURL(file);
+                          }
                         }
                       }}
                       className="hidden"
@@ -505,16 +522,22 @@ export const FamilyPortal: React.FC<FamilyPortalProps> = ({
                     <span>{editKkUrl ? 'Ganti / Unggah KK Baru' : 'Unggah Foto KK'}</span>
                     <input
                       type="file"
-                      accept="image/*,application/pdf"
-                      onChange={(e) => {
+                      accept="image/*"
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = () => {
-                            setEditKkUrl(reader.result as string);
+                          try {
+                            const compressed = await compressImage(file, { maxDimension: 800, quality: 0.75 });
+                            setEditKkUrl(compressed);
                             setEditKkName(file.name);
-                          };
-                          reader.readAsDataURL(file);
+                          } catch {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              setEditKkUrl(reader.result as string);
+                              setEditKkName(file.name);
+                            };
+                            reader.readAsDataURL(file);
+                          }
                         }
                       }}
                       className="hidden"

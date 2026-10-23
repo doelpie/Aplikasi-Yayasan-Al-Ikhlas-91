@@ -4,17 +4,17 @@ import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Use
 import confetti from 'canvas-confetti';
 import { getAvailableKepalaKeluarga, getPeranLabel } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
+import { compressImage } from '../utils/imageCompressor';
 
 // Sample preview data URIs for demo testing
 const SAMPLE_KTP_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="400" height="250" rx="16" fill="%230b5d34"/><rect x="12" y="12" width="376" height="226" rx="12" fill="%23f0fdf4"/><text x="24" y="45" font-family="sans-serif" font-size="15" font-weight="bold" fill="%230b5d34">REPUBLIK INDONESIA</text><text x="24" y="66" font-family="sans-serif" font-size="11" font-weight="bold" fill="%23166534">KARTU TANDA PENDUDUK / KIA</text><rect x="24" y="85" width="80" height="105" rx="8" fill="%23bbf7d0"/><text x="40" y="145" font-family="sans-serif" font-size="32" fill="%23166534">👤</text><text x="120" y="105" font-family="sans-serif" font-size="12" font-weight="bold" fill="%231f2937">NIK : 5103051408860012</text><text x="120" y="128" font-family="sans-serif" font-size="11" fill="%23374151">Nama : Achmad Zaini M.</text><text x="120" y="150" font-family="sans-serif" font-size="11" fill="%23374151">Alamat : Dalung, Badung</text><text x="120" y="172" font-family="sans-serif" font-size="10" font-weight="bold" fill="%2315803d">✓ DOKUMEN VALID KTP</text></svg>';
 
 const SAMPLE_KK_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="400" height="250" rx="16" fill="%231e3a8a"/><rect x="12" y="12" width="376" height="226" rx="12" fill="%23eff6ff"/><text x="24" y="45" font-family="sans-serif" font-size="15" font-weight="bold" fill="%231e3a8a">KARTU KELUARGA (KK)</text><text x="24" y="66" font-family="sans-serif" font-size="11" font-weight="bold" fill="%231d4ed8">No. KK : 5103052809110045</text><rect x="24" y="85" width="352" height="115" rx="8" fill="%23ffffff" stroke="%23cbd5e1"/><text x="36" y="112" font-family="sans-serif" font-size="11" font-weight="bold" fill="%231e293b">Nama Kepala Keluarga : Achmad Zaini</text><text x="36" y="132" font-family="sans-serif" font-size="10" fill="%23475569">Alamat : Jl. Raya Dalung No. 112</text><text x="36" y="152" font-family="sans-serif" font-size="10" fill="%23475569">Desa/Kel : Dalung, Kuta Utara</text><text x="36" y="180" font-family="sans-serif" font-size="10" font-weight="bold" fill="%232563eb">✓ DOKUMEN ASLI KELUARGA</text></svg>';
 
-
 interface RegisterFormProps {
   allMembers: Member[];
   currentUserSession?: Member | null;
-  onSubmit: (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>) => Member;
+  onSubmit: (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>) => Promise<Member> | Member;
   onSuccessRedirect: () => void;
 }
 
@@ -46,11 +46,12 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   // Foto diri / pas foto (wajib untuk kartu)
   const [fotoData, setFotoData] = useState<{ url: string; name: string } | null>(null);
 
-  // Lampiran dokumen KTP & KK (opsional)
+  // Lampiran dokumen KTP & KK (wajib untuk verifikasi)
   const [ktpData, setKtpData] = useState<{ url: string; name: string } | null>(null);
   const [kkData, setKkData] = useState<{ url: string; name: string } | null>(null);
   
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedMember, setSubmittedMember] = useState<Member | null>(null);
 
   // Available Kepala Keluarga in the system
@@ -100,42 +101,38 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     }
   };
 
-  // File and Photo upload handler
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File and Photo upload handler with automatic client-side compression
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Ukuran foto diri maksimal 5 MB.');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setFotoData({ url: reader.result as string, name: file.name });
+    try {
+      const compressed = await compressImage(file, { maxDimension: 600, quality: 0.72 });
+      setFotoData({ url: compressed, name: file.name });
       setError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      setError('Gagal memproses foto diri: ' + (err.message || 'Format tidak didukung'));
+    }
   };
 
-  const handleDocumentUpload = (
+  const handleDocumentUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     type: 'ktp' | 'kk'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
+    try {
+      const compressed = await compressImage(file, { maxDimension: 800, quality: 0.75 });
       if (type === 'ktp') {
-        setKtpData({ url: result, name: file.name });
+        setKtpData({ url: compressed, name: file.name });
       } else {
-        setKkData({ url: result, name: file.name });
+        setKkData({ url: compressed, name: file.name });
       }
       setError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch (err: any) {
+      setError(`Gagal memproses dokumen ${type.toUpperCase()}: ` + (err.message || 'Format tidak didukung'));
+    }
   };
 
   // Demo fill helper with genuine Syar'i Photos & Sample Documents
@@ -211,26 +208,27 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     setError(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     // 1. Validasi Wajib: NIK (KTP / KIA)
     const cleanNik = nik.trim().replace(/\D/g, '');
-    if (cleanNik.length < 10) {
-      setError(`Nomor ${peranKeluarga === 'anak' ? 'KTP / KIA (NIK)' : 'KTP (NIK)'} wajib diisi dengan benar (minimal 10-16 digit angka).`);
+    if (cleanNik.length < 10 || cleanNik.length > 16) {
+      setError(`Nomor ${peranKeluarga === 'anak' ? 'KTP / KIA (NIK)' : 'KTP (NIK)'} harus berupa 10 hingga 16 digit angka.`);
       return;
     }
 
     // 2. Validasi Wajib: Nama Sesuai KTP
-    if (!nama.trim()) {
-      setError('Nama Lengkap Sesuai KTP wajib diisi.');
+    if (!nama.trim() || nama.trim().length < 2) {
+      setError('Nama Lengkap Sesuai KTP wajib diisi (minimal 2 karakter).');
       return;
     }
 
     // 3. Validasi Wajib: Nomor Kartu Keluarga (KK)
     const cleanKk = noKk.trim().replace(/\D/g, '');
-    if (cleanKk.length < 10) {
-      setError('Nomor Kartu Keluarga (No. KK) wajib diisi dengan benar (minimal 10-16 digit angka).');
+    if (cleanKk.length < 10 || cleanKk.length > 16) {
+      setError('Nomor Kartu Keluarga (No. KK) harus berupa 10 hingga 16 digit angka.');
       return;
     }
 
@@ -248,12 +246,21 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
 
     // 6. Validasi Wajib: No HP / WA Aktif
     const cleanHp = noHp.trim().replace(/\D/g, '');
-    if (cleanHp.length < 8) {
-      setError('Nomor HP / WhatsApp aktif wajib diisi (minimal 8 digit angka).');
+    if (cleanHp.length < 8 || cleanHp.length > 15) {
+      setError('Nomor HP / WhatsApp aktif wajib diisi dengan format nomor yang valid (minimal 8 digit angka).');
       return;
     }
 
-    // 7. Validasi Kepala Keluarga jika Istri/Anak
+    // 7. Validasi Format Email jika diisi
+    if (email.trim()) {
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailPattern.test(email.trim())) {
+        setError('Format alamat email tidak valid (contoh: nama@domain.com).');
+        return;
+      }
+    }
+
+    // 8. Validasi Kepala Keluarga jika Istri/Anak
     let linkedHeadName: string | undefined;
     if (peranKeluarga !== 'kepala_keluarga') {
       if (!selectedKepalaKeluargaId) {
@@ -268,26 +275,33 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
       linkedHeadName = head.nama;
     }
 
-    // 8. VALIDASI WAJIB: FOTO DIRI / PAS FOTO
+    // 9. VALIDASI WAJIB: FOTO DIRI / PAS FOTO
     if (!fotoData?.url) {
       setError('Foto Diri / Pas Foto wajib diunggah untuk kelengkapan cetak Kartu Anggota.');
       return;
     }
 
-    // 9. VALIDASI WAJIB: FOTO KTP / KIA
+    // 10. VALIDASI WAJIB: FOTO KTP / KIA
     if (!ktpData?.url) {
       setError('Foto Dokumen KTP / KIA wajib diunggah/dilampirkan sebagai verifikasi identitas resmi.');
       return;
     }
 
-    // 10. VALIDASI WAJIB: FOTO KARTU KELUARGA (KK)
+    // 11. VALIDASI WAJIB: FOTO KARTU KELUARGA (KK)
     if (!kkData?.url) {
       setError('Foto Dokumen Kartu Keluarga (KK) wajib diunggah/dilampirkan sebagai verifikasi data keluarga.');
       return;
     }
 
+    setIsSubmitting(true);
+
     try {
-      const created = onSubmit({
+      // Ensure photos are compressed before submission
+      const finalFoto = await compressImage(fotoData.url, { maxDimension: 600, quality: 0.72 });
+      const finalKtp = await compressImage(ktpData.url, { maxDimension: 800, quality: 0.75 });
+      const finalKk = await compressImage(kkData.url, { maxDimension: 800, quality: 0.75 });
+
+      const created = await onSubmit({
         nik: cleanNik,
         nama: nama.trim(),
         alamat: alamat.trim(),
@@ -299,11 +313,11 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         tempatTanggalLahir: tempatTanggalLahir.trim(),
         jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
         email: email.trim() || undefined,
-        fotoUrl: fotoData.url,
+        fotoUrl: finalFoto,
         fotoName: fotoData.name,
-        ktpUrl: ktpData.url,
+        ktpUrl: finalKtp,
         ktpName: ktpData.name,
-        kkUrl: kkData.url,
+        kkUrl: finalKk,
         kkName: kkData.name,
       });
 
@@ -318,7 +332,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         // ignore
       }
     } catch (err: any) {
-      setError(err?.message || 'Gagal menyimpan pendaftaran.');
+      console.error('Registration submission error:', err);
+      setError(err?.message || 'Gagal menyimpan pendaftaran ke database server. Pastikan koneksi internet stabil dan coba kembali.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -951,10 +968,24 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-4 px-5 bg-[#0b5d34] hover:bg-[#084d2a] active:scale-[0.99] text-white font-bold rounded-2xl shadow-md transition-all cursor-pointer text-sm flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className={`w-full py-4 px-5 text-white font-bold rounded-2xl shadow-md transition-all text-sm flex items-center justify-center gap-2 ${
+                isSubmitting
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-[#0b5d34] hover:bg-[#084d2a] active:scale-[0.99] cursor-pointer'
+              }`}
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Kirim Pendaftaran Anggota Lengkap</span>
+              {isSubmitting ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Menyimpan ke Database Server...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span>Kirim Pendaftaran Anggota Lengkap</span>
+                </>
+              )}
             </button>
           </div>
         </form>

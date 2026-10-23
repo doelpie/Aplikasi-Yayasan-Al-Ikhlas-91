@@ -9,7 +9,9 @@ import {
   subscribeToRealtimeEvents, 
   updateMemberStatus, 
   addNewMember, 
+  addNewMemberAsync,
   updateMember, 
+  updateMemberAsync,
   deleteMember, 
   resetToInitialData,
   requestNotificationPermission,
@@ -191,8 +193,9 @@ export default function App() {
     setCardModalMember(member);
   };
 
-  const handlePublicRegister = (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>) => {
-    const created = addNewMember(memberData);
+  const handlePublicRegister = async (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>): Promise<Member> => {
+    // CRITICAL: Saves to Firestore FIRST. Throws if database rejects, preventing phantom notifications.
+    const created = await addNewMemberAsync(memberData);
     setMembers(getStoredMembers());
     setNotifications(getStoredNotifications());
     
@@ -201,7 +204,7 @@ export default function App() {
       memberId: created.id,
       memberName: created.nama,
       type: 'new_registration',
-      message: `Pendaftaran "${created.nama}" berhasil dikirim! Menunggu ACC pengurus.`,
+      message: `Pendaftaran "${created.nama}" berhasil tersimpan ke database! Menunggu verifikasi pengurus.`,
       timestamp: new Date().toISOString(),
       read: false,
     };
@@ -222,8 +225,8 @@ export default function App() {
   };
 
   // Self update from Profile
-  const handleUpdateSelf = (updated: Member) => {
-    updateMember(updated);
+  const handleUpdateSelf = async (updated: Member) => {
+    await updateMemberAsync(updated);
     setSessionMember(updated);
     setMembers(getStoredMembers());
   };
@@ -251,16 +254,16 @@ export default function App() {
     }
   };
 
-  const handleSaveAdminMember = (memberData: Partial<Member>) => {
+  const handleSaveAdminMember = async (memberData: Partial<Member>) => {
     if (editingMember) {
       const updated: Member = {
         ...editingMember,
         ...memberData,
       } as Member;
-      updateMember(updated);
+      await updateMemberAsync(updated);
       setEditingMember(null);
     } else {
-      addNewMember({
+      await addNewMemberAsync({
         ...memberData as any,
         status: memberData.status || 'disetujui',
       });

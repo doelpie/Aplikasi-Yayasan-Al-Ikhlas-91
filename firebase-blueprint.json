@@ -18,27 +18,27 @@
         "nik": {
           "type": "string",
           "description": "Nomor KTP atau KIA (16 digit)",
-          "maxLength": 30
+          "maxLength": 50
         },
         "nama": {
           "type": "string",
           "description": "Nama Lengkap Sesuai KTP",
-          "maxLength": 150
+          "maxLength": 250
         },
         "alamat": {
           "type": "string",
           "description": "Alamat Tempat Tinggal Lengkap",
-          "maxLength": 500
+          "maxLength": 1000
         },
         "noHp": {
           "type": "string",
           "description": "Nomor WhatsApp atau Telepon",
-          "maxLength": 30
+          "maxLength": 50
         },
         "noKk": {
           "type": "string",
           "description": "Nomor Kartu Keluarga",
-          "maxLength": 30
+          "maxLength": 50
         },
         "peranKeluarga": {
           "type": "string",
@@ -53,12 +53,12 @@
         "namaKepalaKeluarga": {
           "type": "string",
           "description": "Nama Kepala Keluarga",
-          "maxLength": 150
+          "maxLength": 250
         },
         "tempatTanggalLahir": {
           "type": "string",
           "description": "Tempat dan Tanggal Lahir",
-          "maxLength": 150
+          "maxLength": 200
         },
         "jumlahKeluarga": {
           "type": "number",
@@ -67,37 +67,37 @@
         "email": {
           "type": "string",
           "description": "Email anggota",
-          "maxLength": 150
+          "maxLength": 200
         },
         "fotoUrl": {
           "type": "string",
-          "description": "URL foto diri profil berbusana rapi dan syar'i",
-          "maxLength": 500000
+          "description": "URL foto diri profil berbusana rapi dan syar'i (compressed)",
+          "maxLength": 250000
         },
         "fotoName": {
           "type": "string",
           "description": "Nama file foto",
-          "maxLength": 150
+          "maxLength": 200
         },
         "ktpUrl": {
           "type": "string",
-          "description": "URL lampiran foto/dokumen KTP",
-          "maxLength": 500000
+          "description": "URL lampiran foto/dokumen KTP (compressed)",
+          "maxLength": 250000
         },
         "ktpName": {
           "type": "string",
           "description": "Nama file KTP",
-          "maxLength": 150
+          "maxLength": 200
         },
         "kkUrl": {
           "type": "string",
-          "description": "URL lampiran foto/dokumen KK",
-          "maxLength": 500000
+          "description": "URL lampiran foto/dokumen KK (compressed)",
+          "maxLength": 250000
         },
         "kkName": {
           "type": "string",
           "description": "Nama file KK",
-          "maxLength": 150
+          "maxLength": 200
         },
         "status": {
           "type": "string",
@@ -107,17 +107,17 @@
         "catatanPenolakan": {
           "type": "string",
           "description": "Alasan penolakan jika pendaftaran ditolak",
-          "maxLength": 500
+          "maxLength": 1000
         },
         "tanggalDaftar": {
           "type": "string",
           "description": "Tanggal pendaftaran format ISO",
-          "maxLength": 50
+          "maxLength": 100
         },
         "tanggalDisetujui": {
           "type": "string",
           "description": "Tanggal disetujui format ISO",
-          "maxLength": 50
+          "maxLength": 100
         }
       },
       "required": ["id", "nik", "nama", "alamat", "noHp", "noKk", "peranKeluarga", "status", "tanggalDaftar"]
@@ -140,7 +140,7 @@
         "memberName": {
           "type": "string",
           "description": "Nama anggota terkait",
-          "maxLength": 150
+          "maxLength": 250
         },
         "type": {
           "type": "string",
@@ -150,12 +150,12 @@
         "message": {
           "type": "string",
           "description": "Pesan notifikasi",
-          "maxLength": 500
+          "maxLength": 1000
         },
         "timestamp": {
           "type": "string",
           "description": "Waktu notifikasi format ISO",
-          "maxLength": 50
+          "maxLength": 100
         },
         "read": {
           "type": "boolean",
@@ -163,6 +163,64 @@
         }
       },
       "required": ["id", "memberId", "memberName", "type", "message", "timestamp", "read"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Jadwal dan Absensi Kegiatan Yayasan Al Ikhlas",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik kegiatan",
+          "maxLength": 64
+        },
+        "judul": {
+          "type": "string",
+          "description": "Judul kegiatan",
+          "maxLength": 250
+        },
+        "jenis": {
+          "type": "string",
+          "enum": ["rapat_pengurus", "pengajian_umum", "arisan"],
+          "description": "Jenis kegiatan"
+        },
+        "tanggal": {
+          "type": "string",
+          "description": "Tanggal pelaksanaan kegiatan (YYYY-MM-DD)",
+          "maxLength": 30
+        },
+        "jamMulai": {
+          "type": "string",
+          "description": "Jam mulai kegiatan",
+          "maxLength": 20
+        },
+        "jamSelesai": {
+          "type": "string",
+          "description": "Jam selesai kegiatan",
+          "maxLength": 20
+        },
+        "lokasi": {
+          "type": "string",
+          "description": "Lokasi pelaksanaan kegiatan",
+          "maxLength": 300
+        },
+        "deskripsi": {
+          "type": "string",
+          "description": "Deskripsi agenda kegiatan",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Waktu pembuatan format ISO",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Waktu pembaruan format ISO",
+          "maxLength": 100
+        }
+      },
+      "required": ["id", "judul", "jenis", "tanggal", "jamMulai", "deskripsi", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -173,6 +231,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Koleksi notifikasi real-time sistem"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Koleksi jadwal dan presensi kegiatan yayasan"
     }
   }
 }

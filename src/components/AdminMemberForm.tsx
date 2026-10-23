@@ -3,6 +3,7 @@ import { Member, MemberStatus, FamilyRole } from '../types';
 import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2 } from 'lucide-react';
 import { getAvailableKepalaKeluarga } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
+import { compressImage } from '../utils/imageCompressor';
 
 interface AdminMemberFormProps {
   member?: Member | null;
@@ -50,33 +51,47 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
     }
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setFotoUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file, { maxDimension: 600, quality: 0.72 });
+      setFotoUrl(compressed);
+    } catch (err) {
+      const reader = new FileReader();
+      reader.onload = () => setFotoUrl(reader.result as string);
+      reader.readAsDataURL(file);
+    }
   };
 
-  const handleDocumentUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'ktp' | 'kk') => {
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'ktp' | 'kk') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
+    try {
+      const compressed = await compressImage(file, { maxDimension: 800, quality: 0.75 });
       if (type === 'ktp') {
-        setKtpUrl(result);
+        setKtpUrl(compressed);
         setKtpName(file.name);
       } else {
-        setKkUrl(result);
+        setKkUrl(compressed);
         setKkName(file.name);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        if (type === 'ktp') {
+          setKtpUrl(result);
+          setKtpName(file.name);
+        } else {
+          setKkUrl(result);
+          setKkName(file.name);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -497,6 +512,21 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs"
               />
             </div>
+          </div>
+
+          {/* Email Anggota */}
+          <div>
+            <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center justify-between">
+              <span>Alamat Email (Opsional)</span>
+              <span className="text-[10px] text-gray-400 font-normal">Dapat diedit &amp; diperbarui kapan saja</span>
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="contoh: anggota@gmail.com"
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0b5d34]/20"
+            />
           </div>
 
           <div className="pt-2 flex gap-2">
