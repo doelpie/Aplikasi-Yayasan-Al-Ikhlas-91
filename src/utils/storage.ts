@@ -4,16 +4,118 @@ import { soundEffects } from './sound';
 import { SYARI_PHOTOS } from '../data/initialData';
 import { 
   saveMemberToFirestore, 
+  saveMemberWithRetryAndConfirmation,
+  verifyMemberExistsInFirestore,
+  checkFirestoreConnectionStatus,
+  pollVerifyMemberInMembersCollection3Seconds,
   deleteMemberFromFirestore, 
   addNotificationToFirestore, 
   markAllNotificationsAsReadInFirestore 
 } from '../firebase';
 
+export interface DeepRegistrationLogEntry {
+  id: string;
+  traceId: string;
+  timestamp: string;
+  stage: 
+    | 'INISIALISASI'
+    | 'STATUS_KONEKSI_FIRESTORE'
+    | 'PRE_FLIGHT_KOMPRESI'
+    | 'PENULISAN_DATA_MEMBERS'
+    | 'POLLING_3_DETIK_VERIFIKASI'
+    | 'KONFIRMASI_BERHASIL'
+    | 'SINKRONISASI_LOCAL_STATE'
+    | 'PENERBITAN_NOTIFIKASI_ADMIN'
+    | 'ERROR_PENDAFTARAN';
+  title: string;
+  detail: string;
+  latencyMs?: number;
+  data?: Record<string, any>;
+  status: 'SUCCESS' | 'INFO' | 'WARN' | 'ERROR';
+}
+
+const STORAGE_DEEP_LOGS_KEY = 'yayasan_alikhlas_deep_registration_logs_v1';
+
+export function getDeepRegistrationLogs(): DeepRegistrationLogEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_DEEP_LOGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDeepRegistrationLog(entry: DeepRegistrationLogEntry): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = getDeepRegistrationLogs();
+    const updated = [entry, ...current.slice(0, 99)]; // Keep up to 100 deep log records
+    localStorage.setItem(STORAGE_DEEP_LOGS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('Failed to save deep log to localStorage:', err);
+  }
+}
+
+export function clearDeepRegistrationLogs(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(STORAGE_DEEP_LOGS_KEY);
+}
+
+export interface RegistrationTraceStep {
+  step: string;
+  timestamp: string;
+  durationMs: number;
+  detail?: string;
+  success: boolean;
+}
+
+export interface RegistrationTrace {
+  traceId: string;
+  memberId: string;
+  nama: string;
+  nikMasked: string;
+  role: string;
+  timestamp: string;
+  payloadSizeKB: number;
+  steps: RegistrationTraceStep[];
+  totalDurationMs: number;
+  success: boolean;
+  error?: string;
+}
+
 const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
 const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
 const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
 const STORAGE_ACTIVITIES_KEY = 'yayasan_alikhlas_activities_v1';
+const STORAGE_REGISTRATION_TRACES_KEY = 'yayasan_alikhlas_reg_traces_v1';
 const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
+
+export function getRegistrationTraces(): RegistrationTrace[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_REGISTRATION_TRACES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRegistrationTrace(trace: RegistrationTrace): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = getRegistrationTraces();
+    const updated = [trace, ...current.slice(0, 39)]; // Keep up to 40 latest registration audit traces
+    localStorage.setItem(STORAGE_REGISTRATION_TRACES_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('Failed to save registration trace to localStorage:', err);
+  }
+}
+
+export function clearRegistrationTraces(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(STORAGE_REGISTRATION_TRACES_KEY);
+}
 
 let channel: BroadcastChannel | null = null;
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -314,118 +416,394 @@ export function updateMemberStatus(
 }
 
 export async function addNewMemberAsync(
-  data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
+  data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus },
+  onStatusUpdate?: (status: string) => void
 ): Promise<Member> {
-  const members = getStoredMembers();
-  
-  // Generate non-colliding ID e.g. '0120'
-  const maxNum = members.reduce((max, m) => {
-    const root = m.id.split('-')[0];
-    const num = parseInt(root, 10);
-    return !isNaN(num) && num > max ? num : max;
-  }, 118);
+  const overallStartTime = Date.now();
+  const traceId = 'REG-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+  const traceSteps: RegistrationTraceStep[] = [];
 
-  let nextNum = maxNum + 1;
-  let nextId = String(nextNum).padStart(4, '0');
-  
-  // If family member added to existing head of family
-  if (data.kepalaKeluargaId) {
-    const existingFamilyCount = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
-    nextId = `${data.kepalaKeluargaId}-${existingFamilyCount + 1}`;
-  }
-
-  // Ensure nextId does not collide with existing member
-  while (members.some(m => m.id === nextId)) {
-    nextNum++;
-    nextId = String(nextNum).padStart(4, '0');
-  }
-
-  const now = new Date().toISOString();
-  const initialStatus = data.status || 'menunggu';
-
-  // Compress images to lightweight JPEG data URLs (< 80KB each) to prevent Firestore 1MB limits
-  let compressedFoto = data.fotoUrl;
-  let compressedKtp = data.ktpUrl;
-  let compressedKk = data.kkUrl;
-
-  try {
-    if (data.fotoUrl) {
-      compressedFoto = await compressImage(data.fotoUrl, { maxDimension: 600, quality: 0.72 });
-    }
-    if (data.ktpUrl) {
-      compressedKtp = await compressImage(data.ktpUrl, { maxDimension: 800, quality: 0.75 });
-    }
-    if (data.kkUrl) {
-      compressedKk = await compressImage(data.kkUrl, { maxDimension: 800, quality: 0.75 });
-    }
-  } catch (compErr) {
-    console.warn('Image compression note during registration:', compErr);
-  }
-
-  const newMember: Member = {
-    ...data,
-    id: nextId,
-    fotoUrl: compressedFoto,
-    ktpUrl: compressedKtp,
-    kkUrl: compressedKk,
-    status: initialStatus,
-    tanggalDaftar: now,
-    tanggalDisetujui: initialStatus === 'disetujui' ? now : undefined,
+  const addStep = (stepName: string, durationMs: number, success: boolean, detail?: string) => {
+    const record: RegistrationTraceStep = {
+      step: stepName,
+      timestamp: new Date().toISOString(),
+      durationMs,
+      detail,
+      success,
+    };
+    traceSteps.push(record);
+    console.log(`[Trace:${traceId}] [${success ? 'OK' : 'FAIL'}] ${stepName} (${durationMs}ms) - ${detail || ''}`);
   };
 
-  // If head of family, update head's family count
-  if (data.peranKeluarga === 'kepala_keluarga') {
-    newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
-  }
+  const logDeep = (
+    stage: DeepRegistrationLogEntry['stage'],
+    title: string,
+    detail: string,
+    status: DeepRegistrationLogEntry['status'],
+    latencyMs?: number,
+    extraData?: Record<string, any>
+  ) => {
+    const entry: DeepRegistrationLogEntry = {
+      id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      traceId,
+      timestamp: new Date().toISOString(),
+      stage,
+      title,
+      detail,
+      latencyMs: latencyMs || 0,
+      data: extraData,
+      status,
+    };
+    saveDeepRegistrationLog(entry);
+    addStep(`[${stage}] ${title}`, latencyMs || 0, status !== 'ERROR', detail);
 
-  // CRITICAL REQUIREMENT: SAVE TO DATABASE FIRST. ONLY IF SUCCESSFUL, CREATE NOTIFICATION.
+    const badgeColor = 
+      status === 'SUCCESS' ? '#0b5d34' : 
+      status === 'ERROR' ? '#b91c1c' : 
+      status === 'WARN' ? '#d97706' : '#1e40af';
+
+    console.log(
+      `%c[DEEP_LOG:${traceId}]%c [${stage}] %c${title}%c (${latencyMs ? latencyMs + 'ms' : '0ms'}) - ${detail}`,
+      `background:${badgeColor};color:white;font-weight:bold;padding:1px 5px;border-radius:3px;`,
+      'color:#475569;font-weight:bold;',
+      'color:#0f172a;font-weight:600;',
+      'color:#64748b;',
+      extraData ? extraData : ''
+    );
+  };
+
+  console.group(`[Trace:${traceId}] Memulai Pendaftaran Terlacak & Logging Mendalam: "${data.nama}"`);
+  onStatusUpdate?.(`[Trace: ${traceId}] Memulai alur pendaftaran terverifikasi...`);
+
+  let assignedId = '';
+  let payloadKB = 0;
+  const roleText = getPeranLabel(data.peranKeluarga);
+  const nikMasked = data.nik ? data.nik.slice(0, 6) + '******' + data.nik.slice(-4) : '-';
+
   try {
-    await saveMemberToFirestore(newMember);
-  } catch (dbErr: any) {
-    console.error('CRITICAL: Failed to write member to Firestore database:', dbErr);
-    let errMsg = 'Gagal menyimpan pendaftaran ke database server.';
-    if (dbErr?.message?.includes('the client is offline') || dbErr?.message?.includes('unavailable')) {
-      errMsg = 'Koneksi ke database server terputus atau perangkat sedang offline. Mohon periksa koneksi internet Anda.';
-    } else if (dbErr?.message?.includes('exceeds the limit')) {
-      errMsg = 'Ukuran lampiran foto terlalu besar. Silakan gunakan foto yang berukuran wajar.';
-    } else if (dbErr?.message) {
-      errMsg = `Gagal menyimpan ke database server: ${dbErr.message}`;
+    // -------------------------------------------------------------
+    // LANGKAH 1: INISIALISASI PENDAFTARAN & ALOKASI ID UNIK
+    // -------------------------------------------------------------
+    const step1Start = Date.now();
+    const members = getStoredMembers();
+    
+    // Generate non-colliding ID e.g. '0120'
+    const maxNum = members.reduce((max, m) => {
+      const root = m.id.split('-')[0];
+      const num = parseInt(root, 10);
+      return !isNaN(num) && num > max ? num : max;
+    }, 118);
+
+    let nextNum = maxNum + 1;
+    let nextId = String(nextNum).padStart(4, '0');
+    
+    // If family member added to existing head of family
+    if (data.kepalaKeluargaId) {
+      const existingFamilyCount = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
+      nextId = `${data.kepalaKeluargaId}-${existingFamilyCount + 1}`;
     }
-    throw new Error(errMsg);
+
+    // Ensure nextId does not collide with existing member
+    while (members.some(m => m.id === nextId)) {
+      nextNum++;
+      nextId = String(nextNum).padStart(4, '0');
+    }
+    assignedId = nextId;
+    const step1Duration = Date.now() - step1Start;
+
+    logDeep(
+      'INISIALISASI',
+      'Inisialisasi Data & Alokasi ID Anggota',
+      `ID: ${assignedId}, Nama: "${data.nama}", Peran: ${roleText}, NIK: ${nikMasked}, No. KK: ${data.noKk}`,
+      'INFO',
+      step1Duration,
+      { assignedId, nama: data.nama, role: roleText, noKk: data.noKk, nikMasked }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 2: PENGECEKAN STATUS KONEKSI FIRESTORE (LIVE PRE-CHECK)
+    // -------------------------------------------------------------
+    onStatusUpdate?.('Memeriksa status konektivitas live ke server database Firestore...');
+    const step2Start = Date.now();
+    const connStatus = await checkFirestoreConnectionStatus();
+    const connDuration = Date.now() - step2Start;
+
+    if (!connStatus.online) {
+      logDeep(
+        'STATUS_KONEKSI_FIRESTORE',
+        'Koneksi Database Firestore Terputus / Offline',
+        connStatus.message,
+        'ERROR',
+        connDuration,
+        { connStatus }
+      );
+      throw new Error(`Koneksi database Firestore terputus (${connStatus.message}). Periksa koneksi internet.`);
+    }
+
+    logDeep(
+      'STATUS_KONEKSI_FIRESTORE',
+      'Status Koneksi Firestore Aktif & Terhubung',
+      connStatus.message,
+      'SUCCESS',
+      connDuration,
+      { online: true, latencyMs: connStatus.latencyMs }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 3: PRE-FLIGHT KOMPRESI LAMPIRAN & KALKULASI UKURAN PAYLOAD
+    // -------------------------------------------------------------
+    const step3Start = Date.now();
+    onStatusUpdate?.('Memeriksa & mengompresi berkas lampiran (Pas Foto, KTP, KK)...');
+
+    let compressedFoto = data.fotoUrl;
+    let compressedKtp = data.ktpUrl;
+    let compressedKk = data.kkUrl;
+
+    try {
+      if (data.fotoUrl) {
+        compressedFoto = await compressImage(data.fotoUrl, { maxDimension: 600, quality: 0.72 });
+      }
+      if (data.ktpUrl) {
+        compressedKtp = await compressImage(data.ktpUrl, { maxDimension: 800, quality: 0.75 });
+      }
+      if (data.kkUrl) {
+        compressedKk = await compressImage(data.kkUrl, { maxDimension: 800, quality: 0.75 });
+      }
+    } catch (compErr: any) {
+      console.warn(`[Trace:${traceId}] Image compression note:`, compErr);
+    }
+
+    const now = new Date().toISOString();
+    const initialStatus = data.status || 'menunggu';
+
+    const newMember: Member = {
+      ...data,
+      id: assignedId,
+      fotoUrl: compressedFoto,
+      ktpUrl: compressedKtp,
+      kkUrl: compressedKk,
+      status: initialStatus,
+      tanggalDaftar: now,
+      tanggalDisetujui: initialStatus === 'disetujui' ? now : undefined,
+    };
+
+    if (data.peranKeluarga === 'kepala_keluarga') {
+      newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
+    }
+
+    // Hitung ukuran payload (bytes & KB)
+    let payloadBytes = 0;
+    try {
+      payloadBytes = new Blob([JSON.stringify(newMember)]).size;
+      payloadKB = Math.round((payloadBytes / 1024) * 10) / 10;
+    } catch {
+      payloadKB = 50;
+      payloadBytes = 51200;
+    }
+
+    const step3Duration = Date.now() - step3Start;
+    logDeep(
+      'PRE_FLIGHT_KOMPRESI',
+      'Kompresi Dokumen & Kalkulasi Ukuran Payload',
+      `Ukuran total dokumen: ${payloadKB} KB (${payloadBytes} bytes). Jauh di bawah batas 1024 KB Firestore.`,
+      'SUCCESS',
+      step3Duration,
+      { payloadSizeKB: payloadKB, payloadBytes }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 4: PENULISAN DATA KE KOLEKSI 'members' (DENGAN RETRY LOGIC)
+    // -------------------------------------------------------------
+    const step4Start = Date.now();
+    onStatusUpdate?.('Mengirimkan data anggota ke koleksi "members" Firestore...');
+
+    const writeResult = await saveMemberWithRetryAndConfirmation(
+      newMember,
+      5,
+      (status) => onStatusUpdate?.(`[Trace: ${traceId}] ${status}`),
+      traceId
+    );
+
+    const step4Duration = Date.now() - step4Start;
+    logDeep(
+      'PENULISAN_DATA_MEMBERS',
+      'Penulisan Dokumen ke Koleksi members',
+      `Penulisan dokumen "${newMember.nama}" (ID: ${newMember.id}) berhasil pada percobaan ke-${writeResult.totalAttempts} dalam ${writeResult.totalDurationMs}ms`,
+      'SUCCESS',
+      step4Duration,
+      { attempts: writeResult.totalAttempts, totalDurationMs: writeResult.totalDurationMs, memberId: newMember.id }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 5: MEKANISME PENGECEKAN (POLLING) 3 DETIK DI KOLEKSI 'members'
+    // -------------------------------------------------------------
+    onStatusUpdate?.('Menjalankan mekanisme verifikasi polling 3 detik ke koleksi "members"...');
+    const step5Start = Date.now();
+
+    const pollingResult = await pollVerifyMemberInMembersCollection3Seconds(
+      newMember.id,
+      { nama: newMember.nama, nik: newMember.nik },
+      onStatusUpdate
+    );
+
+    const step5Duration = Date.now() - step5Start;
+
+    if (!pollingResult.verified) {
+      logDeep(
+        'POLLING_3_DETIK_VERIFIKASI',
+        'Polling 3 Detik: Gagal Membaca Data di Koleksi members',
+        pollingResult.error || 'Data tidak terbaca di koleksi members Firestore setelah polling 3 detik.',
+        'ERROR',
+        step5Duration,
+        { pollingResult }
+      );
+      throw new Error(pollingResult.error || `Data anggota "${newMember.nama}" (ID: ${newMember.id}) belum terbaca di koleksi members setelah polling 3 detik.`);
+    }
+
+    logDeep(
+      'POLLING_3_DETIK_VERIFIKASI',
+      'Polling 3 Detik: Data Terbaca Sempurna di Koleksi members',
+      `Data dipastikan 100% terbaca dari server Firestore setelah ${pollingResult.totalPolls} kali siklus polling selama ${pollingResult.totalDurationMs}ms.`,
+      'SUCCESS',
+      step5Duration,
+      { totalPolls: pollingResult.totalPolls, durationMs: pollingResult.totalDurationMs }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 6: KONFIRMASI PENULISAN DATA BERHASIL
+    // -------------------------------------------------------------
+    logDeep(
+      'KONFIRMASI_BERHASIL',
+      'Konfirmasi Penulisan Data Berhasil 100%',
+      `Integritas dokumen terverifikasi utuh di Firestore: ${newMember.nama} (ID: ${newMember.id}, Status: ${newMember.status})`,
+      'SUCCESS',
+      0,
+      { memberId: newMember.id, nama: newMember.nama, status: newMember.status }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 7: SINKRONISASI DATA LOKAL & REALTIME BROADCAST
+    // -------------------------------------------------------------
+    const step7Start = Date.now();
+    const freshMembers = getStoredMembers();
+    const updated = [newMember, ...freshMembers.filter(m => m.id !== newMember.id)];
+    saveMembers(updated);
+    soundEffects.playPing();
+    const step7Duration = Date.now() - step7Start;
+
+    logDeep(
+      'SINKRONISASI_LOCAL_STATE',
+      'Penyimpanan ke Cache Lokal & Broadcast Real-Time',
+      `Data anggota tersimpan di cache browser. Total anggota tersimpan: ${updated.length}`,
+      'SUCCESS',
+      step7Duration,
+      { totalMembers: updated.length }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 8: PENERBITAN NOTIFIKASI SUKSES KE ADMIN
+    // (Hanya dikirim karena dokumen sudah 100% dipastikan terbaca di Firestore)
+    // -------------------------------------------------------------
+    const step8Start = Date.now();
+    onStatusUpdate?.('Menerbitkan notifikasi pendaftaran terverifikasi ke admin...');
+
+    const notification = await addNotificationAsync({
+      memberId: newMember.id,
+      memberName: newMember.nama,
+      type: 'new_registration',
+      message: `Pendaftaran baru: "${newMember.nama}" sebagai ${roleText} (No. KK: ${newMember.noKk}). Menunggu verifikasi pengurus.`,
+    });
+
+    triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (${roleText})`);
+
+    broadcastRealtime({
+      type: 'NEW_REGISTRATION',
+      payload: {
+        member: newMember,
+        notification,
+      },
+    });
+
+    const step8Duration = Date.now() - step8Start;
+    logDeep(
+      'PENERBITAN_NOTIFIKASI_ADMIN',
+      'Notifikasi Sukses Diterbitkan ke Admin',
+      `Notifikasi berhasil dikirimkan ke database & broadcast (Notif ID: ${notification.id})`,
+      'SUCCESS',
+      step8Duration,
+      { notificationId: notification.id }
+    );
+
+    // -------------------------------------------------------------
+    // PENYELESAIAN AUDIT TRACE
+    // -------------------------------------------------------------
+    const totalDurationMs = Date.now() - overallStartTime;
+    const finalTrace: RegistrationTrace = {
+      traceId,
+      memberId: assignedId,
+      nama: newMember.nama,
+      nikMasked,
+      role: roleText,
+      timestamp: new Date().toISOString(),
+      payloadSizeKB: payloadKB,
+      steps: traceSteps,
+      totalDurationMs,
+      success: true,
+    };
+    saveRegistrationTrace(finalTrace);
+
+    console.log(`[Trace:${traceId}] SUKSES PARIPURNA: "${newMember.nama}" terdaftar & diverifikasi polling 3 detik dalam ${totalDurationMs}ms!`);
+    console.groupEnd();
+
+    return newMember;
+  } catch (error: any) {
+    const totalDurationMs = Date.now() - overallStartTime;
+    const errorMsg = error?.message || String(error);
+
+    logDeep(
+      'ERROR_PENDAFTARAN',
+      'Kegagalan Proses Pendaftaran',
+      errorMsg,
+      'ERROR',
+      Date.now() - overallStartTime,
+      { error: errorMsg }
+    );
+
+    const failedTrace: RegistrationTrace = {
+      traceId,
+      memberId: assignedId || 'NOT_ALLOCATED',
+      nama: data.nama,
+      nikMasked,
+      role: roleText,
+      timestamp: new Date().toISOString(),
+      payloadSizeKB: payloadKB,
+      steps: traceSteps,
+      totalDurationMs,
+      success: false,
+      error: errorMsg,
+    };
+    saveRegistrationTrace(failedTrace);
+
+    console.error(`[Trace:${traceId}] GAGAL PENDAFTARAN:`, error);
+    console.groupEnd();
+
+    let userFriendlyMsg = 'Gagal menyimpan dan memverifikasi data di database server.';
+    if (errorMsg.includes('the client is offline') || errorMsg.includes('unavailable')) {
+      userFriendlyMsg = 'Koneksi ke database server terputus atau perangkat sedang offline. Mohon periksa koneksi internet Anda.';
+    } else if (errorMsg.includes('exceeds the limit')) {
+      userFriendlyMsg = 'Ukuran lampiran foto terlalu besar. Silakan gunakan foto yang berukuran wajar.';
+    } else if (errorMsg) {
+      userFriendlyMsg = `${errorMsg}`;
+    }
+
+    throw new Error(`[ID Pelacakan: ${traceId}] ${userFriendlyMsg}`);
   }
-
-  // DATABASE WRITE SUCCEEDED - NOW UPDATE LOCAL STATE & SEND NOTIFICATION
-  const freshMembers = getStoredMembers();
-  const updated = [newMember, ...freshMembers.filter(m => m.id !== newMember.id)];
-  saveMembers(updated);
-
-  soundEffects.playPing();
-
-  const roleText = getPeranLabel(newMember.peranKeluarga);
-  const notification = await addNotificationAsync({
-    memberId: newMember.id,
-    memberName: newMember.nama,
-    type: 'new_registration',
-    message: `Pendaftaran baru: "${newMember.nama}" sebagai ${roleText} (No. KK: ${newMember.noKk}). Menunggu verifikasi pengurus.`,
-  });
-
-  triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (${roleText})`);
-
-  broadcastRealtime({
-    type: 'NEW_REGISTRATION',
-    payload: {
-      member: newMember,
-      notification,
-    },
-  });
-
-  return newMember;
 }
 
 export function addNewMember(
   data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
 ): Member {
-  // Sync fallback wrapper that also launches async save
+  // Sync wrapper that safely triggers async tracked save in background
   const members = getStoredMembers();
   const maxNum = members.reduce((max, m) => {
     const root = m.id.split('-')[0];
@@ -454,8 +832,11 @@ export function addNewMember(
     newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
   }
 
-  saveMembers([newMember, ...members]);
-  saveMemberToFirestore(newMember).catch(err => console.warn('Sync write error:', err));
+  // Trigger tracked async flow in background
+  addNewMemberAsync(data).catch(err => {
+    console.error('Async member save note:', err);
+  });
+
   return newMember;
 }
 

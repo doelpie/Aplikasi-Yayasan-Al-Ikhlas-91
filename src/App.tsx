@@ -193,9 +193,12 @@ export default function App() {
     setCardModalMember(member);
   };
 
-  const handlePublicRegister = async (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>): Promise<Member> => {
-    // CRITICAL: Saves to Firestore FIRST. Throws if database rejects, preventing phantom notifications.
-    const created = await addNewMemberAsync(memberData);
+  const handlePublicRegister = async (
+    memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>,
+    onStatusUpdate?: (status: string) => void
+  ): Promise<Member> => {
+    // CRITICAL: Saves to Firestore FIRST with server polling verification. Throws if database rejects, preventing phantom notifications.
+    const created = await addNewMemberAsync(memberData, onStatusUpdate);
     setMembers(getStoredMembers());
     setNotifications(getStoredNotifications());
     

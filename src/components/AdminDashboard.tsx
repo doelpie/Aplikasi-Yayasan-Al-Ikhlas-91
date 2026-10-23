@@ -18,9 +18,23 @@ import {
   Camera,
   CalendarDays,
   QrCode,
-  AlertCircle
+  AlertCircle,
+  History,
+  ShieldCheck,
+  Zap,
+  RefreshCw,
+  X
 } from 'lucide-react';
-import { getPeranLabel, getInitials } from '../utils/storage';
+import { 
+  getPeranLabel, 
+  getInitials, 
+  getRegistrationTraces, 
+  clearRegistrationTraces, 
+  RegistrationTrace,
+  getDeepRegistrationLogs,
+  clearDeepRegistrationLogs,
+  DeepRegistrationLogEntry
+} from '../utils/storage';
 import { ActivityManagement } from './ActivityManagement';
 import { QrScannerModal } from './QrScannerModal';
 
@@ -80,6 +94,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [roleFilter, setRoleFilter] = useState<'semua' | 'kepala_keluarga' | 'istri' | 'anak'>('semua');
   const [rejectingMember, setRejectingMember] = useState<Member | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
+  const [traceList, setTraceList] = useState<RegistrationTrace[]>([]);
+  const [deepLogsList, setDeepLogsList] = useState<DeepRegistrationLogEntry[]>([]);
+  const [traceTab, setTraceTab] = useState<'ringkasan' | 'deep'>('ringkasan');
 
   // Statistics for Anggota
   const countApproved = useMemo(() => members.filter(m => m.status === 'disetujui').length, [members]);
@@ -297,6 +315,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   <Download className="w-3.5 h-3.5 text-blue-600" />
                   <span>Export</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTraceList(getRegistrationTraces());
+                    setIsTraceModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                  title="Lihat Log Pelacakan & Audit Sinkronisasi Firestore"
+                >
+                  <History className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Log Jejak</span>
                 </button>
 
                 <button
@@ -734,6 +765,256 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }}
           onRecordAttendance={onRecordAttendance}
         />
+      )}
+
+      {/* Registration Traceability & Deep Logging Audit Modal */}
+      {isTraceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col border border-gray-100 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-gray-100 bg-[#f8faf9] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight">
+                    Log Pelacakan Pendaftaran &amp; Sinkronisasi Firestore
+                  </h3>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Merekam inisialisasi, status koneksi Firestore, konfirmasi penulisan, &amp; polling 3 detik
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTraceList(getRegistrationTraces());
+                    setDeepLogsList(getDeepRegistrationLogs());
+                  }}
+                  className="p-2 text-gray-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer"
+                  title="Segarkan Log"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTraceModalOpen(false)}
+                  className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+                  title="Tutup"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Navigation Tabs in Modal: Ringkasan vs Log Mendalam */}
+            <div className="flex border-b border-gray-100 bg-[#f8faf9] px-4 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setTraceTab('ringkasan')}
+                className={`py-2 px-3 border-b-2 font-bold cursor-pointer transition-colors ${
+                  traceTab === 'ringkasan'
+                    ? 'border-indigo-600 text-indigo-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Ringkasan Pendaftaran ({traceList.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeepLogsList(getDeepRegistrationLogs());
+                  setTraceTab('deep');
+                }}
+                className={`py-2 px-3 border-b-2 font-bold cursor-pointer transition-colors ${
+                  traceTab === 'deep'
+                    ? 'border-indigo-600 text-indigo-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Log Mendalam &amp; Polling 3 Detik ({deepLogsList.length})
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3.5">
+              <div className="flex items-center justify-between text-xs text-gray-500 pb-1">
+                <span>
+                  {traceTab === 'ringkasan' 
+                    ? `Total riwayat sesi: ${traceList.length}` 
+                    : `Total rincian log: ${deepLogsList.length} rekaman`}
+                </span>
+                {(traceList.length > 0 || deepLogsList.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Bersihkan semua riwayat log pelacakan dan log mendalam pada perangkat ini?')) {
+                        clearRegistrationTraces();
+                        clearDeepRegistrationLogs();
+                        setTraceList([]);
+                        setDeepLogsList([]);
+                      }
+                    }}
+                    className="text-rose-600 hover:underline cursor-pointer font-medium"
+                  >
+                    Bersihkan Riwayat
+                  </button>
+                )}
+              </div>
+
+              {traceTab === 'ringkasan' ? (
+                traceList.length === 0 ? (
+                  <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                    <History className="w-8 h-8 text-gray-400 mx-auto" />
+                    <div className="text-xs font-semibold text-gray-700">Belum Ada Catatan Pendaftaran Baru</div>
+                    <p className="text-[11px] text-gray-500 max-w-sm mx-auto leading-relaxed">
+                      Setiap pendaftaran anggota baru yang dilakukan akan otomatis mencatat tahapan kalkulasi ukuran berkas, percobaan retry, verifikasi konsistensi server Firestore, dan penerbitan notifikasi di sini.
+                    </p>
+                  </div>
+                ) : (
+                  traceList.map((tr) => (
+                    <div
+                      key={tr.traceId}
+                      className={`p-3.5 sm:p-4 rounded-2xl border text-xs transition-all ${
+                        tr.success
+                          ? 'bg-white border-emerald-200/90 shadow-2xs'
+                          : 'bg-rose-50/50 border-rose-200 shadow-2xs'
+                      }`}
+                    >
+                      {/* Header Trace Record */}
+                      <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-gray-100">
+                        <div className="flex items-center gap-2">
+                          {tr.success ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          )}
+                          <div>
+                            <div className="font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                              <span>{tr.nama}</span>
+                              <span className="px-1.5 py-0.5 rounded-md bg-stone-100 text-[10px] text-gray-700 font-semibold">
+                                {tr.role}
+                              </span>
+                              <span className="text-[10px] text-gray-400 font-mono">
+                                ID: {tr.memberId}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-0.5">
+                              NIK: {tr.nikMasked} &bull; {new Date(tr.timestamp).toLocaleString('id-ID')}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 font-bold border border-indigo-200/70 block">
+                            {tr.traceId}
+                          </span>
+                          <div className="text-[10px] text-gray-500 mt-0.5">
+                            {tr.payloadSizeKB} KB &bull; {tr.totalDurationMs}ms
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Error Box if Failed */}
+                      {tr.error && (
+                        <div className="my-2.5 p-2 bg-rose-100/70 border border-rose-300 rounded-xl text-rose-800 text-[11px] flex items-start gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                          <span className="break-all">{tr.error}</span>
+                        </div>
+                      )}
+
+                      {/* Step Breakdown */}
+                      <div className="mt-2.5 space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                          Rincian Langkah &amp; Latensi:
+                        </div>
+                        <div className="space-y-1 pl-1">
+                          {tr.steps.map((st, sIdx) => (
+                            <div key={sIdx} className="flex items-center justify-between text-[11px] text-gray-600">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${st.success ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                <span className="truncate">{st.step}</span>
+                                {st.detail && (
+                                  <span className="text-[10px] text-gray-400 truncate hidden sm:inline">
+                                    ({st.detail})
+                                  </span>
+                                )}
+                              </div>
+                              <span className="font-mono text-[10px] text-gray-400 shrink-0 ml-2">
+                                {st.durationMs}ms
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : (
+                /* Tab Log Mendalam (Deep Logs) */
+                deepLogsList.length === 0 ? (
+                  <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                    <ShieldCheck className="w-8 h-8 text-gray-400 mx-auto" />
+                    <div className="text-xs font-semibold text-gray-700">Belum Ada Rekaman Log Mendalam</div>
+                    <p className="text-[11px] text-gray-500 max-w-sm mx-auto leading-relaxed">
+                      Log mendalam mencatat status ping koneksi Firestore, ukuran payload byte, siklus polling 3 detik, dan waktu penulisan secara terperinci per event.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {deepLogsList.map((log) => {
+                      const badgeStyle = 
+                        log.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                        log.status === 'ERROR' ? 'bg-rose-100 text-rose-800 border-rose-300' :
+                        log.status === 'WARN' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                        'bg-indigo-100 text-indigo-800 border-indigo-300';
+
+                      return (
+                        <div key={log.id} className="p-3 bg-white border border-gray-200/80 rounded-2xl shadow-2xs text-xs space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold border ${badgeStyle}`}>
+                              [{log.stage}]
+                            </span>
+                            <div className="text-[10px] text-gray-400 font-mono">
+                              {new Date(log.timestamp).toLocaleTimeString('id-ID')} &bull; {log.latencyMs ? `${log.latencyMs}ms` : '0ms'}
+                            </div>
+                          </div>
+                          <div className="font-bold text-gray-900 pt-0.5">
+                            {log.title}
+                          </div>
+                          <div className="text-[11px] text-gray-600 leading-relaxed">
+                            {log.detail}
+                          </div>
+                          <div className="text-[10px] text-gray-400 font-mono">
+                            Trace: {log.traceId}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 sm:p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-[11px] text-emerald-800 flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Pengecekan polling 3 detik menjamin data terbaca di koleksi 'members'</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsTraceModalOpen(false)}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-xl text-xs cursor-pointer shadow-xs"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* EXACT 4-MENU ADMIN BOTTOM DOCK: Anggota | Kegiatan | Scan QR | Logout */}

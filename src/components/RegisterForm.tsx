@@ -14,7 +14,10 @@ const SAMPLE_KK_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/200
 interface RegisterFormProps {
   allMembers: Member[];
   currentUserSession?: Member | null;
-  onSubmit: (memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>) => Promise<Member> | Member;
+  onSubmit: (
+    memberData: Omit<Member, 'id' | 'tanggalDaftar' | 'status'>,
+    onStatusUpdate?: (status: string) => void
+  ) => Promise<Member> | Member;
   onSuccessRedirect: () => void;
 }
 
@@ -52,6 +55,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [statusText, setStatusText] = useState<string | null>(null);
   const [submittedMember, setSubmittedMember] = useState<Member | null>(null);
 
   // Available Kepala Keluarga in the system
@@ -294,6 +298,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     }
 
     setIsSubmitting(true);
+    setStatusText('Mengompresi dan mengoptimalkan dokumen...');
 
     try {
       // Ensure photos are compressed before submission
@@ -301,25 +306,30 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
       const finalKtp = await compressImage(ktpData.url, { maxDimension: 800, quality: 0.75 });
       const finalKk = await compressImage(kkData.url, { maxDimension: 800, quality: 0.75 });
 
-      const created = await onSubmit({
-        nik: cleanNik,
-        nama: nama.trim(),
-        alamat: alamat.trim(),
-        noHp: noHp.trim(),
-        noKk: cleanKk || noKk.trim(),
-        peranKeluarga,
-        kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedKepalaKeluargaId : undefined,
-        namaKepalaKeluarga: linkedHeadName,
-        tempatTanggalLahir: tempatTanggalLahir.trim(),
-        jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
-        email: email.trim() || undefined,
-        fotoUrl: finalFoto,
-        fotoName: fotoData.name,
-        ktpUrl: finalKtp,
-        ktpName: ktpData.name,
-        kkUrl: finalKk,
-        kkName: kkData.name,
-      });
+      setStatusText('Menghubungkan ke server Firestore...');
+
+      const created = await onSubmit(
+        {
+          nik: cleanNik,
+          nama: nama.trim(),
+          alamat: alamat.trim(),
+          noHp: noHp.trim(),
+          noKk: cleanKk || noKk.trim(),
+          peranKeluarga,
+          kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedKepalaKeluargaId : undefined,
+          namaKepalaKeluarga: linkedHeadName,
+          tempatTanggalLahir: tempatTanggalLahir.trim(),
+          jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
+          email: email.trim() || undefined,
+          fotoUrl: finalFoto,
+          fotoName: fotoData.name,
+          ktpUrl: finalKtp,
+          ktpName: ktpData.name,
+          kkUrl: finalKk,
+          kkName: kkData.name,
+        },
+        (status) => setStatusText(status)
+      );
 
       setSubmittedMember(created);
       try {
@@ -336,6 +346,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
       setError(err?.message || 'Gagal menyimpan pendaftaran ke database server. Pastikan koneksi internet stabil dan coba kembali.');
     } finally {
       setIsSubmitting(false);
+      setStatusText(null);
     }
   };
 
@@ -964,22 +975,34 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             </div>
           </div>
 
-          {/* Submit Button */}
-          <div className="pt-2">
+          {/* Submit Button & Live Verification Progress */}
+          <div className="pt-2 space-y-2.5">
+            {isSubmitting && statusText && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-2.5 text-xs text-emerald-900 shadow-xs animate-pulse">
+                <div className="w-4 h-4 border-2 border-[#0b5d34] border-t-transparent rounded-full animate-spin shrink-0" />
+                <div className="flex-1">
+                  <div className="font-bold text-[#0b5d34]">{statusText}</div>
+                  <div className="text-[10px] text-emerald-700 mt-0.5">
+                    Memverifikasi kepastian tersimpan di server Firestore sebelum notifikasi dikirimkan.
+                  </div>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isSubmitting}
               className={`w-full py-4 px-5 text-white font-bold rounded-2xl shadow-md transition-all text-sm flex items-center justify-center gap-2 ${
                 isSubmitting
-                  ? 'bg-gray-400 cursor-not-allowed'
+                  ? 'bg-emerald-900/80 cursor-not-allowed opacity-90'
                   : 'bg-[#0b5d34] hover:bg-[#084d2a] active:scale-[0.99] cursor-pointer'
               }`}
             >
               {isSubmitting ? (
-                <>
+                <div className="flex items-center gap-2.5">
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Menyimpan ke Database Server...</span>
-                </>
+                  <span>{statusText || 'Menyimpan & Memverifikasi di Server...'}</span>
+                </div>
               ) : (
                 <>
                   <CheckCircle2 className="w-5 h-5" />
