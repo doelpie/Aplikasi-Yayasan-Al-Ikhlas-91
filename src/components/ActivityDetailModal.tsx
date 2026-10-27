@@ -25,6 +25,7 @@ import {
   getInitials 
 } from '../utils/storage';
 import { getGoogleCalendarUrl, downloadIcsFile } from '../utils/calendarExport';
+import { exportAttendanceToExcelWithImages } from '../utils/excelExport';
 
 interface ActivityDetailModalProps {
   activity: Activity;
@@ -47,6 +48,8 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'hadir' | 'peserta'>('hadir');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const typeLabel = getActivityTypeLabel(activity.jenis);
   const typeStyle = getActivityTypeBadgeClass(activity.jenis);
@@ -81,38 +84,25 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
     m.id.includes(searchQuery)
   );
 
-  // Export Daftar Hadir as CSV
-  const handleExportCsv = () => {
-    if (activity.kehadiran.length === 0) {
-      alert('Belum ada data kehadiran untuk diexport.');
+  // Export Daftar Hadir as Excel (.xlsx) with embedded photos (Foto Profil, Foto KTP, Foto KK)
+  const handleExportExcel = async () => {
+    if (activity.kehadiran.length === 0 || isExportingExcel) {
       return;
     }
-
-    const headers = ['No', 'ID Anggota', 'Nama Lengkap', 'NIK', 'Peran Keluarga', 'Jam Scan Hadir', 'Kegiatan', 'Jenis'];
-    const rows = activity.kehadiran.map((k, idx) => [
-      idx + 1,
-      `"${k.memberId}"`,
-      `"${k.memberNama.replace(/"/g, '""')}"`,
-      `'${k.memberNik}`,
-      `"${getPeranLabel(k.memberPeran as any)}"`,
-      `"${k.scanTimeFormatted}"`,
-      `"${activity.judul.replace(/"/g, '""')}"`,
-      `"${typeLabel}"`,
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [
-      headers.join(','),
-      ...rows.map(e => e.join(','))
-    ].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    const cleanTitle = activity.judul.replace(/\s+/g, '_').slice(0, 30);
-    link.setAttribute('download', `Daftar_Hadir_${cleanTitle}_${activity.tanggal}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    setIsExportingExcel(true);
+    setExportStatus('Menyiapkan Excel & Foto...');
+    try {
+      await exportAttendanceToExcelWithImages(activity, allMembers, (msg) => {
+        setExportStatus(msg);
+      });
+    } catch (err) {
+      console.error('Error exporting attendance to Excel:', err);
+    } finally {
+      setTimeout(() => {
+        setIsExportingExcel(false);
+        setExportStatus(null);
+      }, 800);
+    }
   };
 
   const handlePrint = () => {
@@ -233,14 +223,22 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               <span>Scan QR Hadir</span>
             </button>
 
-            {/* Tombol Export CSV Kehadiran */}
+            {/* Tombol Export Excel Kehadiran Beserta Foto */}
             <button
               type="button"
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-300 transition-colors cursor-pointer"
+              onClick={handleExportExcel}
+              disabled={isExportingExcel || activity.kehadiran.length === 0}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                activity.kehadiran.length === 0
+                  ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                  : isExportingExcel
+                  ? 'bg-amber-50 text-amber-800 border-amber-300 cursor-wait'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+              }`}
+              title="Export daftar hadir ke Excel (.xlsx) beserta Foto Profil, Foto KTP, dan Foto KK"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
+              <span>{isExportingExcel ? (exportStatus || 'Mengekspor...') : 'Export Excel + Foto'}</span>
             </button>
           </div>
         </div>

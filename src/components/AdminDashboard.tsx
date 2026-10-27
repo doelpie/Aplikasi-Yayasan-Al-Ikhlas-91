@@ -37,6 +37,7 @@ import {
 } from '../utils/storage';
 import { ActivityManagement } from './ActivityManagement';
 import { QrScannerModal } from './QrScannerModal';
+import { exportMembersToExcelWithImages, generateDocumentPreviewDataUrl } from '../utils/excelExport';
 
 interface AdminDashboardProps {
   members: Member[];
@@ -98,6 +99,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [traceList, setTraceList] = useState<RegistrationTrace[]>([]);
   const [deepLogsList, setDeepLogsList] = useState<DeepRegistrationLogEntry[]>([]);
   const [traceTab, setTraceTab] = useState<'ringkasan' | 'deep'>('ringkasan');
+
+  // Excel Export with embedded images state
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [exportProgressText, setExportProgressText] = useState<string | null>(null);
 
   // Statistics for Anggota
   const countApproved = useMemo(() => members.filter(m => m.status === 'disetujui').length, [members]);
@@ -166,46 +171,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     window.open(waUrl, '_blank');
   };
 
-  // Export to CSV
-  const handleExportCSV = () => {
-    const headers = [
-      'ID Anggota',
-      'Status Hubungan',
-      'NIK (KTP/KIA)',
-      'Nama Sesuai KTP',
-      'No Kartu Keluarga (KK)',
-      'Kepala Keluarga',
-      'Tempat Tanggal Lahir',
-      'Alamat Domisili',
-      'No Telp/HP',
-      'Status Approval',
-      'Tanggal Daftar',
-      'Tanggal Disetujui',
-    ];
-
-    const rows = members.map(m => [
-      `"${m.id}"`,
-      `"${getPeranLabel(m.peranKeluarga)}"`,
-      `"'${m.nik}"`,
-      `"${m.nama.replace(/"/g, '""')}"`,
-      `"'${m.noKk}"`,
-      `"${m.namaKepalaKeluarga || (m.peranKeluarga === 'kepala_keluarga' ? m.nama : '-')}"`,
-      `"${m.tempatTanggalLahir.replace(/"/g, '""')}"`,
-      `"${m.alamat.replace(/"/g, '""')}"`,
-      `"'${m.noHp}"`,
-      `"${m.status.toUpperCase()}"`,
-      `"${m.tanggalDaftar}"`,
-      `"${m.tanggalDisetujui || '-'}"`,
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Data_Anggota_Yayasan_Al_Ikhlas_Sembilan_Satu_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // Export to Excel (.xlsx) with embedded images (Foto Profil, Foto KTP, Foto KK)
+  const handleExportExcel = async () => {
+    if (isExportingExcel) return;
+    setIsExportingExcel(true);
+    setExportProgressText('Menyiapkan buku kerja Excel & memproses foto...');
+    try {
+      await exportMembersToExcelWithImages(members, (status) => {
+        setExportProgressText(status);
+      });
+    } catch (err) {
+      console.error('Gagal mengekspor Excel:', err);
+    } finally {
+      setTimeout(() => {
+        setIsExportingExcel(false);
+        setExportProgressText(null);
+      }, 900);
+    }
   };
 
   return (
@@ -309,12 +291,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleExportCSV}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-[#0b5d34] border border-emerald-200 transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                  title="Ekspor data anggota ke CSV"
+                  onClick={handleExportExcel}
+                  disabled={isExportingExcel}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                    isExportingExcel
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 cursor-wait'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-[#0b5d34] border-emerald-200'
+                  }`}
+                  title="Ekspor seluruh data anggota beserta Foto Profil, Foto KTP, dan Foto KK ke format Excel (.xlsx)"
                 >
-                  <Download className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Export</span>
+                  <Download className={`w-3.5 h-3.5 ${isExportingExcel ? 'text-amber-600 animate-bounce' : 'text-blue-600'}`} />
+                  <span>{isExportingExcel ? 'Mengekspor Excel + Foto...' : 'Export Excel + Foto'}</span>
                 </button>
 
                 <button
@@ -341,6 +328,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Excel Export Progress Banner */}
+            {exportProgressText && (
+              <div className="mb-4 bg-emerald-900 text-white rounded-2xl p-3.5 text-xs flex items-center justify-between gap-3 shadow-md border border-[#d4af37]">
+                <div className="flex items-center gap-2.5">
+                  <RefreshCw className="w-4 h-4 text-[#d4af37] animate-spin shrink-0" />
+                  <div>
+                    <div className="font-bold text-[#d4af37]">Export Excel (.xlsx) Beserta Foto Profil, KTP &amp; KK</div>
+                    <div className="text-emerald-100 text-[11px] mt-0.5">{exportProgressText}</div>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-white/10 text-[10px] font-bold text-emerald-200 shrink-0">
+                  Mohon Tunggu...
+                </span>
+              </div>
+            )}
 
             {/* 4 Top Stat Cards: 2 Cols on Mobile, 4 Cols on Tablet & PC */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
@@ -575,39 +578,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             HP: {member.noHp}
                           </div>
 
-                          {/* Documents */}
+                          {/* Documents: Foto Diri, Foto KTP, Foto KK */}
                           <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap items-center gap-3 text-xs">
-                            {member.fotoUrl && (
-                              <button
-                                onClick={() => onViewDoc(`Foto Diri - ${member.nama}`, member.fotoUrl, member.fotoName)}
-                                className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
-                              >
-                                <Camera className="w-3.5 h-3.5" />
-                                <span>Foto Diri</span>
-                              </button>
-                            )}
-                            {member.ktpUrl ? (
-                              <button
-                                onClick={() => onViewDoc(`KTP - ${member.nama}`, member.ktpUrl, member.ktpName)}
-                                className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                <span>KTP</span>
-                              </button>
-                            ) : (
-                              <span className="text-gray-400">KTP (-)</span>
-                            )}
-                            {member.kkUrl ? (
-                              <button
-                                onClick={() => onViewDoc(`KK - ${member.nama}`, member.kkUrl, member.kkName)}
-                                className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                <span>KK</span>
-                              </button>
-                            ) : (
-                              <span className="text-gray-400">KK (-)</span>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => onViewDoc(`Foto Diri - ${member.nama}`, member.fotoUrl || generateDocumentPreviewDataUrl('profil', member), member.fotoName || `Foto_${member.id}.jpg`)}
+                              className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>Foto Diri</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => onViewDoc(`Foto KTP / KIA - ${member.nama}`, member.ktpUrl || generateDocumentPreviewDataUrl('ktp', member), member.ktpName || `KTP_${member.nik}.jpg`)}
+                              className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>Foto KTP</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => onViewDoc(`Foto Kartu Keluarga (KK) - ${member.nama}`, member.kkUrl || generateDocumentPreviewDataUrl('kk', member), member.kkName || `KK_${member.noKk}.jpg`)}
+                              className="text-emerald-700 hover:text-emerald-800 font-semibold inline-flex items-center gap-1 underline cursor-pointer"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>Foto KK</span>
+                            </button>
                           </div>
 
                           {/* Action buttons */}

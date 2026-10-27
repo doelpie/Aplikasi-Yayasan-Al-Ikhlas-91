@@ -39,9 +39,12 @@ import { NotificationToast } from './components/NotificationToast';
 import { 
   subscribeMembersFirestore, 
   subscribeNotificationsFirestore, 
-  seedInitialDataIfEmpty 
+  seedInitialDataIfEmpty,
+  subscribeToQuotaLimitErrors,
+  isFirestoreQuotaError,
+  QUOTA_LIMIT_MESSAGE
 } from './firebase';
-import { Users, FilePenLine, Info, Shield, User } from 'lucide-react';
+import { Users, FilePenLine, Info, Shield, User, AlertTriangle, X } from 'lucide-react';
 
 export default function App() {
   // Navigation State: 'anggota' | 'daftar' | 'profil' | 'info' | 'admin'
@@ -50,6 +53,10 @@ export default function App() {
 
   // Warga User Session (Kepala Keluarga, Istri, Anak)
   const [currentUserSession, setSessionMember] = useState<Member | null>(() => getCurrentUserSession());
+  const sessionRef = React.useRef<Member | null>(currentUserSession);
+  useEffect(() => {
+    sessionRef.current = currentUserSession;
+  }, [currentUserSession]);
 
   // Data State
   const [members, setMembers] = useState<Member[]>(() => getStoredMembers());
@@ -63,8 +70,9 @@ export default function App() {
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const [viewingDoc, setViewingDoc] = useState<{ title: string; url?: string; fileName?: string } | null>(null);
 
-  // Real-time Notification Toast State
+  // Real-time Notification Toast State & Quota Limit Alert State
   const [currentToast, setCurrentToast] = useState<AppNotification | null>(null);
+  const [quotaErrorBanner, setQuotaErrorBanner] = useState<string | null>(null);
   const [isOpenNotifDrawer, setIsOpenNotifDrawer] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -75,8 +83,9 @@ export default function App() {
       setMembers(refreshedMembers);
 
       // Refresh current session if matches
-      if (currentUserSession) {
-        const freshUser = refreshedMembers.find(m => m.id === currentUserSession.id);
+      const activeUser = sessionRef.current;
+      if (activeUser) {
+        const freshUser = refreshedMembers.find(m => m.id === activeUser.id);
         if (freshUser) {
           setSessionMember(freshUser);
           setCurrentUserSession(freshUser);
@@ -98,10 +107,26 @@ export default function App() {
         }
       }
     }
-  }, [soundEnabled, currentUserSession]);
+  }, [soundEnabled]);
 
   useEffect(() => {
     requestNotificationPermission();
+
+    // 0. Subscribe to Firebase Quota Limit notifications
+    const unsubQuota = subscribeToQuotaLimitErrors((message) => {
+      setQuotaErrorBanner(message);
+      soundEffects.playWarning();
+      const quotaNotif: AppNotification = {
+        id: 'quota_limit_' + Date.now(),
+        memberId: 'SYSTEM',
+        memberName: 'Database Firebase',
+        type: 'status_rejected',
+        message,
+        timestamp: new Date().toISOString(),
+        read: false,
+      };
+      setCurrentToast(quotaNotif);
+    });
 
     // 1. Initial seed check for Firebase Firestore
     seedInitialDataIfEmpty().catch(err => console.warn('Firestore seed note:', err));
@@ -112,8 +137,9 @@ export default function App() {
         setMembers(remoteMembers);
         saveMembers(remoteMembers);
 
-        if (currentUserSession) {
-          const freshUser = remoteMembers.find(m => m.id === currentUserSession.id);
+        const activeUser = sessionRef.current;
+        if (activeUser) {
+          const freshUser = remoteMembers.find(m => m.id === activeUser.id);
           if (freshUser) {
             setSessionMember(freshUser);
             setCurrentUserSession(freshUser);
@@ -146,12 +172,13 @@ export default function App() {
     window.addEventListener('storage', onStorageChange);
 
     return () => {
+      unsubQuota();
       unsubMembers();
       unsubNotifs();
       unsubscribeBroadcast();
       window.removeEventListener('storage', onStorageChange);
     };
-  }, [handleRealtimeMessage, currentUserSession]);
+  }, [handleRealtimeMessage]);
 
   // Auto-dismiss notification toast after 6 seconds
   useEffect(() => {
@@ -229,9 +256,24 @@ export default function App() {
 
   // Self update from Profile
   const handleUpdateSelf = async (updated: Member) => {
-    await updateMemberAsync(updated);
-    setSessionMember(updated);
-    setMembers(getStoredMembers());
+    try {
+      await updateMemberAsync(updated);
+      setSessionMember(updated);
+      setMembers(getStoredMembers());
+      setCurrentToast({
+        id: 'update_ok_' + Date.now(),
+        memberId: updated.id,
+        memberName: updated.nama,
+        type: 'status_approved',
+        message: `Profil "${updated.nama}" berhasil diperbarui dan disinkronkan ke database.`,
+        timestamp: new Date().toISOString(),
+        read: false,
+      });
+    } catch (err: any) {
+      const msg = isFirestoreQuotaError(err) ? QUOTA_LIMIT_MESSAGE : (err?.message || QUOTA_LIMIT_MESSAGE);
+      setQuotaErrorBanner(msg);
+      throw new Error(msg);
+    }
   };
 
   // Handlers for Admin - Member Management
@@ -258,22 +300,28 @@ export default function App() {
   };
 
   const handleSaveAdminMember = async (memberData: Partial<Member>) => {
-    if (editingMember) {
-      const updated: Member = {
-        ...editingMember,
-        ...memberData,
-      } as Member;
-      await updateMemberAsync(updated);
-      setEditingMember(null);
-    } else {
-      await addNewMemberAsync({
-        ...memberData as any,
-        status: memberData.status || 'disetujui',
-      });
-      setIsAddingAdmin(false);
+    try {
+      if (editingMember) {
+        const updated: Member = {
+          ...editingMember,
+          ...memberData,
+        } as Member;
+        await updateMemberAsync(updated);
+        setEditingMember(null);
+      } else {
+        await addNewMemberAsync({
+          ...memberData as any,
+          status: memberData.status || 'disetujui',
+        });
+        setIsAddingAdmin(false);
+      }
+      setMembers(getStoredMembers());
+      setNotifications(getStoredNotifications());
+    } catch (err: any) {
+      const msg = isFirestoreQuotaError(err) ? QUOTA_LIMIT_MESSAGE : (err?.message || 'Gagal menyimpan data ke database.');
+      setQuotaErrorBanner(msg);
+      throw new Error(msg);
     }
-    setMembers(getStoredMembers());
-    setNotifications(getStoredNotifications());
   };
 
   const handleDeleteMember = (memberId: string) => {
@@ -337,6 +385,29 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f4f8f5] text-stone-900 font-sans selection:bg-[#0b5d34] selection:text-white relative">
+      {/* Global Firebase Quota Limit Notification Banner */}
+      {quotaErrorBanner && (
+        <div className="sticky top-0 z-50 bg-rose-700 text-white px-4 py-3 shadow-lg border-b-2 border-amber-400 animate-in fade-in slide-in-from-top-2">
+          <div className="max-w-5xl mx-auto flex items-start sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5 sm:mt-0" />
+              <div className="text-xs sm:text-sm font-bold leading-snug">
+                <span className="uppercase tracking-wider text-amber-300 mr-1.5">[Notifikasi Database]</span>
+                {quotaErrorBanner}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setQuotaErrorBanner(null)}
+              className="p-1 rounded-lg bg-white/15 hover:bg-white/25 text-white shrink-0 cursor-pointer"
+              title="Tutup Peringatan"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Real-time Toast Notifications & Drawer */}
       <NotificationToast
         currentToast={currentToast}

@@ -63,9 +63,52 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export const QUOTA_LIMIT_MESSAGE = 'Data gagal tersimpan atau tersinkron ke database karena akses data telah limit pada hari ini.';
+
+export function isFirestoreQuotaError(error: unknown): boolean {
+  if (!error) return false;
+  const code = (error as any)?.code || '';
+  const msg = error instanceof Error ? error.message : String(error);
+  const combined = `${code} ${msg}`.toLowerCase();
+  return (
+    combined.includes('resource-exhausted') ||
+    combined.includes('quota exceeded') ||
+    combined.includes('quota') ||
+    combined.includes('429') ||
+    combined.includes('limit pada hari ini')
+  );
+}
+
+type QuotaErrorListener = (message: string, detail?: string) => void;
+const quotaListeners = new Set<QuotaErrorListener>();
+let lastQuotaNotifyTime = 0;
+
+export function subscribeToQuotaLimitErrors(listener: QuotaErrorListener): () => void {
+  quotaListeners.add(listener);
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
+export function notifyQuotaLimitExceeded(detail?: string): void {
+  const now = Date.now();
+  // Throttle duplicate notifications within 3 seconds
+  if (now - lastQuotaNotifyTime < 3000) return;
+  lastQuotaNotifyTime = now;
+  console.warn('[FIRESTORE_QUOTA_LIMIT]', QUOTA_LIMIT_MESSAGE, detail || '');
+  quotaListeners.forEach((listener) => {
+    try {
+      listener(QUOTA_LIMIT_MESSAGE, detail);
+    } catch (e) {
+      console.error('Error in quota listener:', e);
+    }
+  });
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const rawMessage = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: rawMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -81,11 +124,18 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+
+  if (isFirestoreQuotaError(error)) {
+    notifyQuotaLimitExceeded(rawMessage);
+    throw new Error(QUOTA_LIMIT_MESSAGE);
+  }
+
   throw new Error(JSON.stringify(errInfo));
 }
 
 export interface FirestoreConnectionCheckResult {
   online: boolean;
+  quotaExceeded?: boolean;
   latencyMs: number;
   message: string;
 }
@@ -101,6 +151,15 @@ export async function checkFirestoreConnectionStatus(): Promise<FirestoreConnect
   } catch (err: any) {
     const latencyMs = Date.now() - start;
     const msg = err?.message || String(err);
+    if (isFirestoreQuotaError(err)) {
+      notifyQuotaLimitExceeded(msg);
+      return {
+        online: false,
+        quotaExceeded: true,
+        latencyMs,
+        message: QUOTA_LIMIT_MESSAGE,
+      };
+    }
     if (msg.includes('the client is offline') || msg.includes('unavailable')) {
       return { online: false, latencyMs, message: 'Koneksi client offline atau tidak dapat menjangkau server Firestore' };
     }
@@ -115,11 +174,10 @@ export async function testConnection(): Promise<boolean> {
   if (res.online) {
     console.log('Firestore connection verified successfully:', res.message);
   } else {
-    console.warn('Firestore offline warning:', res.message);
+    console.warn('Firestore offline/quota warning:', res.message);
   }
   return res.online;
 }
-testConnection();
 
 export interface Polling3SecondsResult {
   verified: boolean;
@@ -132,7 +190,7 @@ export interface Polling3SecondsResult {
 /**
  * Mekanisme pengecekan (polling) 3 detik untuk memastikan data benar-benar terbaca
  * di koleksi 'members' sebelum mengirimkan notifikasi sukses ke admin.
- * Melakukan polling berulang selama durasi minimal 3 detik (3000ms).
+ * Melakukan polling selama durasi 3 detik (3000ms).
  */
 export async function pollVerifyMemberInMembersCollection3Seconds(
   memberId: string,
@@ -142,7 +200,7 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
   const memberDocRef = doc(db, MEMBERS_COLLECTION, memberId);
   const startTime = Date.now();
   const MIN_POLLING_DURATION_MS = 3000; // Minimal 3 detik polling
-  const POLL_INTERVAL_MS = 600; // Interval 600ms per siklus pengecekan
+  const POLL_INTERVAL_MS = 750; // Interval per siklus pengecekan
 
   let pollCount = 0;
   let lastReadDoc: any = null;
@@ -150,41 +208,55 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
 
   console.log(`[POLLING_3_DETIK] Memulai verifikasi keterbacaan data anggota '${memberId}' di koleksi 'members' selama minimal 3 detik...`);
 
-  while (Date.now() - startTime < MIN_POLLING_DURATION_MS || pollCount < 5) {
+  while (Date.now() - startTime < MIN_POLLING_DURATION_MS) {
     pollCount++;
     const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
     onStatusUpdate?.(`[Polling 3 Detik: Siklus ${pollCount}] Membaca data dari koleksi 'members' di Firestore (${elapsedSec}d / 3.0d)...`);
 
-    try {
-      const pollStart = Date.now();
-      const snap = await getDocFromServer(memberDocRef);
-      const pollLatency = Date.now() - pollStart;
+    // Jika sudah terverifikasi dari server pada siklus sebelumnya, cukup tunggu sisa durasi 3 detik agar hemat kuota read
+    if (readSuccessCount >= 1 && lastReadDoc) {
+      console.log(`[POLLING_3_DETIK] Siklus ${pollCount}: Data '${memberId}' konsisten di koleksi 'members' (berjalan ${elapsedSec}s / 3.0s).`);
+    } else {
+      try {
+        const pollStart = Date.now();
+        const snap = await getDocFromServer(memberDocRef);
+        const pollLatency = Date.now() - pollStart;
 
-      if (snap.exists()) {
-        const data = snap.data();
-        lastReadDoc = data;
+        if (snap.exists()) {
+          const data = snap.data();
+          lastReadDoc = data;
 
-        // Validasi kelengkapan data di dalam koleksi 'members'
-        const idMatches = data.id === memberId;
-        const namaMatches = !expectedData?.nama || data.nama === expectedData.nama;
-        const nikMatches = !expectedData?.nik || data.nik === expectedData.nik;
+          // Validasi kelengkapan data di dalam koleksi 'members'
+          const idMatches = data.id === memberId;
+          const namaMatches = !expectedData?.nama || data.nama === expectedData.nama;
+          const nikMatches = !expectedData?.nik || data.nik === expectedData.nik;
 
-        if (idMatches && namaMatches && nikMatches) {
-          readSuccessCount++;
-          console.log(`[POLLING_3_DETIK] Siklus ${pollCount}: Data '${memberId}' BERHASIL TERBACA di server Firestore (${pollLatency}ms, berjalan ${elapsedSec}s). Valid: OK.`);
+          if (idMatches && namaMatches && nikMatches) {
+            readSuccessCount++;
+            console.log(`[POLLING_3_DETIK] Siklus ${pollCount}: Data '${memberId}' BERHASIL TERBACA di server Firestore (${pollLatency}ms, berjalan ${elapsedSec}s). Valid: OK.`);
+          } else {
+            console.warn(`[POLLING_3_DETIK] Siklus ${pollCount}: Dokumen ada tetapi data belum sinkron sepenuhnya.`);
+          }
         } else {
-          console.warn(`[POLLING_3_DETIK] Siklus ${pollCount}: Dokumen ada tetapi data belum sinkron sepenuhnya.`);
+          console.warn(`[POLLING_3_DETIK] Siklus ${pollCount}: Dokumen '${memberId}' belum ditemukan di koleksi 'members'.`);
         }
-      } else {
-        console.warn(`[POLLING_3_DETIK] Siklus ${pollCount}: Dokumen '${memberId}' belum ditemukan di koleksi 'members'.`);
+      } catch (err: any) {
+        if (isFirestoreQuotaError(err)) {
+          notifyQuotaLimitExceeded(err?.message || String(err));
+          return {
+            verified: false,
+            totalDurationMs: Date.now() - startTime,
+            totalPolls: pollCount,
+            error: QUOTA_LIMIT_MESSAGE,
+          };
+        }
+        console.warn(`[POLLING_3_DETIK] Siklus ${pollCount} error pembacaan getDocFromServer:`, err?.message || err);
       }
-    } catch (err: any) {
-      console.warn(`[POLLING_3_DETIK] Siklus ${pollCount} error pembacaan getDocFromServer:`, err?.message || err);
     }
 
     const elapsed = Date.now() - startTime;
-    if (elapsed < MIN_POLLING_DURATION_MS || pollCount < 5) {
-      const sleepTime = Math.min(POLL_INTERVAL_MS, Math.max(100, MIN_POLLING_DURATION_MS - elapsed));
+    if (elapsed < MIN_POLLING_DURATION_MS) {
+      const sleepTime = Math.min(POLL_INTERVAL_MS, Math.max(150, MIN_POLLING_DURATION_MS - elapsed));
       await new Promise(res => setTimeout(res, sleepTime));
     }
   }
@@ -192,7 +264,7 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
   const finalDurationMs = Date.now() - startTime;
 
   if (readSuccessCount > 0 && lastReadDoc) {
-    console.log(`[POLLING_3_DETIK] SUKSES: Data anggota '${memberId}' dipastikan 100% terbaca di koleksi 'members' setelah polling ${finalDurationMs}ms (${pollCount} siklus pembacaan).`);
+    console.log(`[POLLING_3_DETIK] SUKSES: Data anggota '${memberId}' dipastikan 100% terbaca di koleksi 'members' setelah polling ${finalDurationMs}ms (${pollCount} siklus).`);
     return {
       verified: true,
       totalDurationMs: finalDurationMs,
@@ -214,6 +286,7 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
 // Collection paths
 const MEMBERS_COLLECTION = 'members';
 const NOTIFICATIONS_COLLECTION = 'notifications';
+const SEEDED_FLAG_KEY = 'yayasan_alikhlas_firestore_seeded_v1';
 
 // Clean object to avoid undefined fields in Firestore
 function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
@@ -229,6 +302,9 @@ function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
 // Seed initial members if database is empty
 export async function seedInitialDataIfEmpty(): Promise<void> {
   try {
+    if (typeof window !== 'undefined' && localStorage.getItem(SEEDED_FLAG_KEY) === 'true') {
+      return;
+    }
     const snap = await getDocs(collection(db, MEMBERS_COLLECTION));
     if (snap.empty) {
       console.log('Seeding initial members to Firestore...');
@@ -237,7 +313,13 @@ export async function seedInitialDataIfEmpty(): Promise<void> {
       }
       console.log('Seeding initial members completed.');
     }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SEEDED_FLAG_KEY, 'true');
+    }
   } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
     console.warn('Initial seeding note:', error);
   }
 }
@@ -320,6 +402,10 @@ export async function verifyMemberExistsInFirestore(
         }
       }
     } catch (err: any) {
+      if (isFirestoreQuotaError(err)) {
+        notifyQuotaLimitExceeded(err?.message || String(err));
+        throw new Error(QUOTA_LIMIT_MESSAGE);
+      }
       console.warn(`[FirestoreTrace:Verify] Server poll attempt ${attempt}/${maxAttempts} for member ${memberId} error:`, err?.message || err);
     }
 
@@ -377,7 +463,7 @@ export async function saveMemberWithRetryAndConfirmation(
       onStatusUpdate?.(`[Percobaan ${attempt}/${maxRetries}] Memverifikasi keberadaan data di server Firestore (polling)...`);
       const isConfirmed = await verifyMemberExistsInFirestore(
         member.id,
-        8,
+        4,
         350,
         (curr, max) => onStatusUpdate?.(`[Percobaan ${attempt}/${maxRetries}] Mengonfirmasi data di server Firestore (Cek ${curr}/${max})...`),
         { nama: member.nama, nik: member.nik, status: member.status }
@@ -402,6 +488,12 @@ export async function saveMemberWithRetryAndConfirmation(
       lastError = error;
       const attemptDuration = Date.now() - attemptStartTime;
       console.warn(`[FirestoreTrace:${tid}] Firestore write attempt ${attempt}/${maxRetries} failed (${attemptDuration}ms):`, error?.message || error);
+
+      // Immediately abort retries if Firebase quota limit is exceeded
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error?.message || String(error));
+        throw new Error(QUOTA_LIMIT_MESSAGE);
+      }
     }
   }
 
@@ -445,8 +537,17 @@ export function subscribeMembersFirestore(
       onUpdate(list);
     },
     (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
       onError?.(error);
-      handleFirestoreError(error, OperationType.LIST, path);
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (e) {
+        console.warn('Firestore listener error:', e);
+      }
     }
   );
 }
@@ -469,6 +570,11 @@ export function subscribeNotificationsFirestore(
       onUpdate(list);
     },
     (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
       // Fallback query without orderBy in case index is pending
       const fallbackCol = collection(db, path);
       return onSnapshot(
@@ -480,8 +586,17 @@ export function subscribeNotificationsFirestore(
           onUpdate(list);
         },
         (err2) => {
+          if (isFirestoreQuotaError(err2)) {
+            notifyQuotaLimitExceeded(err2.message);
+            onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+            return;
+          }
           onError?.(err2);
-          handleFirestoreError(err2, OperationType.LIST, path);
+          try {
+            handleFirestoreError(err2, OperationType.LIST, path);
+          } catch (e) {
+            console.warn('Firestore notifications listener error:', e);
+          }
         }
       );
     }

@@ -10,7 +10,10 @@ import {
   pollVerifyMemberInMembersCollection3Seconds,
   deleteMemberFromFirestore, 
   addNotificationToFirestore, 
-  markAllNotificationsAsReadInFirestore 
+  markAllNotificationsAsReadInFirestore,
+  QUOTA_LIMIT_MESSAGE,
+  isFirestoreQuotaError,
+  notifyQuotaLimitExceeded
 } from '../firebase';
 
 export interface DeepRegistrationLogEntry {
@@ -529,6 +532,17 @@ export async function addNewMemberAsync(
     const connDuration = Date.now() - step2Start;
 
     if (!connStatus.online) {
+      if (connStatus.quotaExceeded) {
+        logDeep(
+          'STATUS_KONEKSI_FIRESTORE',
+          'Batas Kuota Harian Firebase Tercapai',
+          QUOTA_LIMIT_MESSAGE,
+          'ERROR',
+          connDuration,
+          { connStatus }
+        );
+        throw new Error(QUOTA_LIMIT_MESSAGE);
+      }
       logDeep(
         'STATUS_KONEKSI_FIRESTORE',
         'Koneksi Database Firestore Terputus / Offline',
@@ -788,7 +802,11 @@ export async function addNewMemberAsync(
     console.groupEnd();
 
     let userFriendlyMsg = 'Gagal menyimpan dan memverifikasi data di database server.';
-    if (errorMsg.includes('the client is offline') || errorMsg.includes('unavailable')) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(errorMsg);
+      userFriendlyMsg = QUOTA_LIMIT_MESSAGE;
+      throw new Error(userFriendlyMsg);
+    } else if (errorMsg.includes('the client is offline') || errorMsg.includes('unavailable')) {
       userFriendlyMsg = 'Koneksi ke database server terputus atau perangkat sedang offline. Mohon periksa koneksi internet Anda.';
     } else if (errorMsg.includes('exceeds the limit')) {
       userFriendlyMsg = 'Ukuran lampiran foto terlalu besar. Silakan gunakan foto yang berukuran wajar.';
@@ -866,7 +884,15 @@ export async function updateMemberAsync(updatedMember: Member): Promise<Member> 
     kkUrl: compressedKk,
   };
 
-  await saveMemberToFirestore(finalMember);
+  try {
+    await saveMemberToFirestore(finalMember);
+  } catch (err: any) {
+    if (isFirestoreQuotaError(err)) {
+      notifyQuotaLimitExceeded(err?.message || String(err));
+      throw new Error(QUOTA_LIMIT_MESSAGE);
+    }
+    throw err;
+  }
 
   const members = getStoredMembers();
   const index = members.findIndex(m => m.id === finalMember.id);
