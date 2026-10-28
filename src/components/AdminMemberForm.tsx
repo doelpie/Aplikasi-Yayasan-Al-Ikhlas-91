@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Member, MemberStatus, FamilyRole } from '../types';
-import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2 } from 'lucide-react';
-import { getAvailableKepalaKeluarga } from '../utils/storage';
+import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2, RotateCcw } from 'lucide-react';
+import { getAvailableKepalaKeluarga, checkNikAvailability, restoreMemberFromTempDataLamaAsync, getPeranLabel } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
 import { compressImage } from '../utils/imageCompressor';
 
@@ -9,7 +9,8 @@ interface AdminMemberFormProps {
   member?: Member | null;
   allMembers: Member[];
   onClose: () => void;
-  onSave: (data: Partial<Member>) => void;
+  onSave: (data: Partial<Member>) => Promise<void> | void;
+  onRestoreSuccess?: (restored: Member) => void;
 }
 
 export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
@@ -17,6 +18,7 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
   allMembers,
   onClose,
   onSave,
+  onRestoreSuccess,
 }) => {
   const isEdit = !!member;
 
@@ -39,6 +41,9 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
   const [kkUrl, setKkUrl] = useState(member?.kkUrl || '');
   const [kkName, setKkName] = useState(member?.kkName || '');
   const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [deletedMatchMember, setDeletedMatchMember] = useState<Member | null>(null);
+  const [isRestoringDeleted, setIsRestoringDeleted] = useState(false);
 
   const availableHeads = getAvailableKepalaKeluarga(allMembers).filter(h => h.id !== member?.id);
 
@@ -94,10 +99,12 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
-    if (!nik.trim() || nik.length < 10) {
+    const cleanNik = nik.trim().replace(/\D/g, '');
+    if (!cleanNik || cleanNik.length < 10) {
       setError('Nomor KTP/KIA wajib diisi (minimal 10 digit).');
       return;
     }
@@ -122,29 +129,69 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
       return;
     }
 
-    const headMember = allMembers.find(m => m.id === selectedHeadId);
+    setIsSaving(true);
+    try {
+      const nikCheck = await checkNikAvailability(cleanNik, member?.id);
+      if (nikCheck.status === 'exists_in_members' && nikCheck.member) {
+        setError(
+          `Nomor KTP/NIK ${cleanNik} sudah terdaftar aktif atas nama "${nikCheck.member.nama}" (ID Anggota: ${nikCheck.member.id}). Nomor KTP harus unik.`
+        );
+        setIsSaving(false);
+        return;
+      }
 
-    onSave({
-      peranKeluarga,
-      nik: nik.trim().replace(/\D/g, ''),
-      nama: nama.trim(),
-      noKk: noKk.trim(),
-      kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedHeadId : undefined,
-      namaKepalaKeluarga: peranKeluarga !== 'kepala_keluarga' ? headMember?.nama : undefined,
-      tempatTanggalLahir: tempatTanggalLahir.trim(),
-      alamat: alamat.trim(),
-      jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
-      noHp: noHp.trim(),
-      email: email.trim() || undefined,
-      regNumber: regNumber.trim() || undefined,
-      fotoUrl,
-      ktpUrl: ktpUrl || undefined,
-      ktpName: ktpName || undefined,
-      kkUrl: kkUrl || undefined,
-      kkName: kkName || undefined,
-      status,
-      catatanPenolakan: status === 'ditolak' ? catatanPenolakan.trim() : undefined,
-    });
+      if (!isEdit && nikCheck.status === 'exists_in_tempdatalama' && nikCheck.member) {
+        setDeletedMatchMember(nikCheck.member);
+        setIsSaving(false);
+        return;
+      }
+
+      const headMember = allMembers.find(m => m.id === selectedHeadId);
+
+      await onSave({
+        peranKeluarga,
+        nik: cleanNik,
+        nama: nama.trim(),
+        noKk: noKk.trim(),
+        kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedHeadId : undefined,
+        namaKepalaKeluarga: peranKeluarga !== 'kepala_keluarga' ? headMember?.nama : undefined,
+        tempatTanggalLahir: tempatTanggalLahir.trim(),
+        alamat: alamat.trim(),
+        jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
+        noHp: noHp.trim(),
+        email: email.trim() || undefined,
+        regNumber: regNumber.trim() || undefined,
+        fotoUrl,
+        ktpUrl: ktpUrl || undefined,
+        ktpName: ktpName || undefined,
+        kkUrl: kkUrl || undefined,
+        kkName: kkName || undefined,
+        status,
+        catatanPenolakan: status === 'ditolak' ? catatanPenolakan.trim() : undefined,
+      });
+    } catch (err: any) {
+      setError(err?.message || 'Gagal menyimpan data anggota.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleConfirmRestoreDeleted = async () => {
+    if (!deletedMatchMember) return;
+    setIsRestoringDeleted(true);
+    setError(null);
+    try {
+      const restored = await restoreMemberFromTempDataLamaAsync(deletedMatchMember, {
+        status: status || 'disetujui',
+      });
+      setDeletedMatchMember(null);
+      onRestoreSuccess?.(restored);
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Gagal memulihkan data dari tempdatalama.');
+    } finally {
+      setIsRestoringDeleted(false);
+    }
   };
 
   return (
@@ -532,10 +579,11 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
           <div className="pt-2 flex gap-2">
             <button
               type="submit"
-              className="flex-1 py-3 px-4 bg-[#0b5d34] hover:bg-[#084d2a] text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              disabled={isSaving}
+              className="flex-1 py-3 px-4 bg-[#0b5d34] hover:bg-[#084d2a] disabled:opacity-60 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{isEdit ? 'Simpan Perubahan' : 'Tambah Anggota'}</span>
+              <span>{isSaving ? 'Menyimpan & Memverifikasi...' : isEdit ? 'Simpan Perubahan' : 'Tambah Anggota'}</span>
             </button>
             <button
               type="button"
@@ -547,6 +595,56 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Modal Konfirmasi Pemulihan Data dari tempdatalama */}
+      {deletedMatchMember && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border-t-4 border-[#0b5d34] space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  Data Pernah Terdaftar di Sistem
+                </h3>
+                <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                  Nomor KTP <strong>{deletedMatchMember.nik}</strong> pernah sudah terdaftar atas nama{' '}
+                  <strong className="text-[#0b5d34]">"{deletedMatchMember.nama}"</strong> (ID:{' '}
+                  <strong>{deletedMatchMember.id}</strong>, {getPeranLabel(deletedMatchMember.peranKeluarga)}).
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs font-semibold text-gray-800">
+              Apakah Anda ingin mengembalikan kembali data yang sudah terhapus tersebut dari tabel <code className="px-1.5 py-0.5 bg-gray-100 rounded text-[#0b5d34]">tempdatalama</code> ke tabel <code className="px-1.5 py-0.5 bg-gray-100 rounded text-[#0b5d34]">members</code>?
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={isRestoringDeleted}
+                onClick={handleConfirmRestoreDeleted}
+                className="flex-1 py-2.5 px-4 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <RotateCcw className={`w-4 h-4 ${isRestoringDeleted ? 'animate-spin' : ''}`} />
+                <span>{isRestoringDeleted ? 'Memulihkan...' : 'Ya, Kembalikan Data'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isRestoringDeleted}
+                onClick={() => setDeletedMatchMember(null)}
+                className="py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

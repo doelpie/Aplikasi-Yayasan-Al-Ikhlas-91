@@ -1,7 +1,7 @@
 import { Member, AppNotification, BroadcastMessage, MemberStatus, FamilyRole, Activity, ActivityType, ActivityAttendee } from '../types';
-import { INITIAL_MEMBERS } from '../data/initialData';
+import { INITIAL_MEMBERS, SYARI_PHOTOS } from '../data/initialData';
 import { soundEffects } from './sound';
-import { SYARI_PHOTOS } from '../data/initialData';
+import { compressImage } from './imageCompressor';
 import { 
   saveMemberToFirestore, 
   saveMemberWithRetryAndConfirmation,
@@ -11,6 +11,12 @@ import {
   deleteMemberFromFirestore, 
   addNotificationToFirestore, 
   markAllNotificationsAsReadInFirestore,
+  allocateUniqueMemberIdFromServer,
+  recordAllocatedIdInCounter,
+  saveToTempDataLamaFirestore,
+  deleteFromTempDataLamaFirestore,
+  fetchTempDataLamaFromFirestore,
+  fetchMembersFromFirestore,
   QUOTA_LIMIT_MESSAGE,
   isFirestoreQuotaError,
   notifyQuotaLimitExceeded
@@ -22,6 +28,7 @@ export interface DeepRegistrationLogEntry {
   timestamp: string;
   stage: 
     | 'INISIALISASI'
+    | 'VALIDASI_UNIK_NIK_ID'
     | 'STATUS_KONEKSI_FIRESTORE'
     | 'PRE_FLIGHT_KOMPRESI'
     | 'PENULISAN_DATA_MEMBERS'
@@ -29,6 +36,7 @@ export interface DeepRegistrationLogEntry {
     | 'KONFIRMASI_BERHASIL'
     | 'SINKRONISASI_LOCAL_STATE'
     | 'PENERBITAN_NOTIFIKASI_ADMIN'
+    | 'PEMULIHAN_TEMPDATALAMA'
     | 'ERROR_PENDAFTARAN';
   title: string;
   detail: string;
@@ -38,6 +46,39 @@ export interface DeepRegistrationLogEntry {
 }
 
 const STORAGE_DEEP_LOGS_KEY = 'yayasan_alikhlas_deep_registration_logs_v1';
+const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
+const STORAGE_TEMP_DATA_LAMA_KEY = 'yayasan_alikhlas_tempdatalama_v1';
+const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
+const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
+const STORAGE_ACTIVITIES_KEY = 'yayasan_alikhlas_activities_v1';
+const STORAGE_REGISTRATION_TRACES_KEY = 'yayasan_alikhlas_reg_traces_v1';
+const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
+
+// Sanitize log data to never store massive base64 images inside localStorage logs
+function sanitizeDataForLog(data: any): any {
+  if (!data) return data;
+  if (typeof data === 'string') {
+    if (data.startsWith('data:image') || data.length > 300) {
+      return `[Lampiran Gambar/Data ~${Math.round(data.length / 1024)} KB]`;
+    }
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.slice(0, 10).map(sanitizeDataForLog);
+  }
+  if (typeof data === 'object') {
+    const copy: any = {};
+    for (const key of Object.keys(data)) {
+      if (key === 'fotoUrl' || key === 'ktpUrl' || key === 'kkUrl') {
+        copy[key] = data[key] ? `[Gambar ~${Math.round(String(data[key]).length / 1024)} KB]` : null;
+      } else {
+        copy[key] = sanitizeDataForLog(data[key]);
+      }
+    }
+    return copy;
+  }
+  return data;
+}
 
 export function getDeepRegistrationLogs(): DeepRegistrationLogEntry[] {
   if (typeof window === 'undefined') return [];
@@ -52,17 +93,27 @@ export function getDeepRegistrationLogs(): DeepRegistrationLogEntry[] {
 export function saveDeepRegistrationLog(entry: DeepRegistrationLogEntry): void {
   if (typeof window === 'undefined') return;
   try {
+    const sanitizedEntry: DeepRegistrationLogEntry = {
+      ...entry,
+      detail: entry.detail && entry.detail.length > 400 ? entry.detail.slice(0, 400) + '...' : entry.detail,
+      data: sanitizeDataForLog(entry.data),
+    };
     const current = getDeepRegistrationLogs();
-    const updated = [entry, ...current.slice(0, 99)]; // Keep up to 100 deep log records
+    const updated = [sanitizedEntry, ...current.slice(0, 19)]; // Keep max 20 lightweight log records
     localStorage.setItem(STORAGE_DEEP_LOGS_KEY, JSON.stringify(updated));
-  } catch (err) {
-    console.warn('Failed to save deep log to localStorage:', err);
+  } catch (err: any) {
+    try {
+      localStorage.removeItem(STORAGE_DEEP_LOGS_KEY);
+    } catch {}
+    console.warn('Cleared deep logs to prevent quota overflow:', err?.message || err);
   }
 }
 
 export function clearDeepRegistrationLogs(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_DEEP_LOGS_KEY);
+  try {
+    localStorage.removeItem(STORAGE_DEEP_LOGS_KEY);
+  } catch {}
 }
 
 export interface RegistrationTraceStep {
@@ -87,13 +138,6 @@ export interface RegistrationTrace {
   error?: string;
 }
 
-const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
-const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
-const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
-const STORAGE_ACTIVITIES_KEY = 'yayasan_alikhlas_activities_v1';
-const STORAGE_REGISTRATION_TRACES_KEY = 'yayasan_alikhlas_reg_traces_v1';
-const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
-
 export function getRegistrationTraces(): RegistrationTrace[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -108,16 +152,21 @@ export function saveRegistrationTrace(trace: RegistrationTrace): void {
   if (typeof window === 'undefined') return;
   try {
     const current = getRegistrationTraces();
-    const updated = [trace, ...current.slice(0, 39)]; // Keep up to 40 latest registration audit traces
+    const updated = [trace, ...current.slice(0, 14)]; // Keep max 15 traces
     localStorage.setItem(STORAGE_REGISTRATION_TRACES_KEY, JSON.stringify(updated));
-  } catch (err) {
-    console.warn('Failed to save registration trace to localStorage:', err);
+  } catch (err: any) {
+    try {
+      localStorage.removeItem(STORAGE_REGISTRATION_TRACES_KEY);
+    } catch {}
+    console.warn('Cleared registration traces to prevent quota overflow:', err?.message || err);
   }
 }
 
 export function clearRegistrationTraces(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_REGISTRATION_TRACES_KEY);
+  try {
+    localStorage.removeItem(STORAGE_REGISTRATION_TRACES_KEY);
+  } catch {}
 }
 
 let channel: BroadcastChannel | null = null;
@@ -129,17 +178,243 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
   }
 }
 
+// =========================================================================
+// IN-MEMORY & INDEXED-DB HIGH-CAPACITY STORAGE (NO LOCALSTORAGE 5MB LIMIT)
+// =========================================================================
+let inMemoryMembers: Member[] | null = null;
+let inMemoryTempDataLama: Member[] | null = null;
+
+const IDB_NAME = 'YayasanAlIkhlasStore';
+const IDB_VERSION = 1;
+const IDB_STORE = 'members_cache';
+
+function openIndexedDB(): Promise<IDBDatabase | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      const request = window.indexedDB.open(IDB_NAME, IDB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+export async function saveMembersToIndexedDB(members: Member[]): Promise<void> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return;
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.put(members, 'all_members');
+  } catch (err) {
+    console.warn('IndexedDB save notice:', err);
+  }
+}
+
+export async function loadMembersFromIndexedDB(): Promise<Member[] | null> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get('all_members');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveTempDataLamaToIndexedDB(tempMembers: Member[]): Promise<void> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return;
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.put(tempMembers, 'tempdatalama');
+  } catch (err) {
+    console.warn('IndexedDB tempdatalama save notice:', err);
+  }
+}
+
+export async function loadTempDataLamaFromIndexedDB(): Promise<Member[] | null> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get('tempdatalama');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Hydrate in-memory cache from IndexedDB on startup
+if (typeof window !== 'undefined') {
+  loadMembersFromIndexedDB().then((idbMembers) => {
+    if (idbMembers && idbMembers.length > 0) {
+      if (!inMemoryMembers || inMemoryMembers.length === 0) {
+        inMemoryMembers = idbMembers;
+      } else {
+        inMemoryMembers = inMemoryMembers.map((m) => {
+          const fromIdb = idbMembers.find((im) => im.id === m.id);
+          if (fromIdb) {
+            return {
+              ...m,
+              fotoUrl: m.fotoUrl || fromIdb.fotoUrl,
+              ktpUrl: m.ktpUrl || fromIdb.ktpUrl,
+              kkUrl: m.kkUrl || fromIdb.kkUrl,
+            };
+          }
+          return m;
+        });
+      }
+    }
+  }).catch(() => {});
+
+  loadTempDataLamaFromIndexedDB().then((idbTemp) => {
+    if (idbTemp && idbTemp.length > 0 && (!inMemoryTempDataLama || inMemoryTempDataLama.length === 0)) {
+      inMemoryTempDataLama = idbTemp;
+    }
+  }).catch(() => {});
+}
+
+// Strip heavy base64 strings (> 2KB) exclusively for localStorage to stay well below the 5MB browser quota
+function createLightweightMembersForLocalStorage(members: Member[]): Member[] {
+  return members.map((m) => {
+    const stripped = { ...m };
+    if (stripped.fotoUrl && stripped.fotoUrl.startsWith('data:') && stripped.fotoUrl.length > 2000) {
+      stripped.fotoUrl = '';
+    }
+    if (stripped.ktpUrl && stripped.ktpUrl.startsWith('data:') && stripped.ktpUrl.length > 2000) {
+      stripped.ktpUrl = '';
+    }
+    if (stripped.kkUrl && stripped.kkUrl.startsWith('data:') && stripped.kkUrl.length > 2000) {
+      stripped.kkUrl = '';
+    }
+    return stripped;
+  });
+}
+
+/**
+ * Ensures locally cached members always contain 0130 (Agus Subriyanto), 0130-2 (Tutik Maryani), and 0131 (Sriyono, SH.MM)
+ * and repairs any local cache where 0130 was overwritten by Sriyono.
+ */
+export function ensureAgusAndSriyonoInMemberList(list: Member[]): { members: Member[]; changed: boolean } {
+  let updated = [...list];
+  let changed = false;
+
+  const canonical0130 = INITIAL_MEMBERS.find(m => m.id === '0130')!;
+  const canonical0130_2 = INITIAL_MEMBERS.find(m => m.id === '0130-2')!;
+  const canonical0131 = INITIAL_MEMBERS.find(m => m.id === '0131')!;
+
+  const idx0130 = updated.findIndex(m => m.id === '0130');
+  const idx0131 = updated.findIndex(m => m.id === '0131');
+
+  // If 0130 currently holds Sriyono, move Sriyono to 0131 and restore Agus Subriyanto to 0130
+  if (idx0130 !== -1 && updated[idx0130].nama.toLowerCase().includes('sriyono')) {
+    const sriyonoFrom0130 = updated[idx0130];
+    const movedSriyono: Member = {
+      ...canonical0131,
+      ...sriyonoFrom0130,
+      id: '0131',
+      nama: sriyonoFrom0130.nama || 'Sriyono, SH.MM',
+      regNumber: sriyonoFrom0130.regNumber
+        ? sriyonoFrom0130.regNumber.replace(/0130/g, '0131')
+        : canonical0131.regNumber,
+      nik: (sriyonoFrom0130.nik && sriyonoFrom0130.nik !== canonical0130.nik)
+        ? sriyonoFrom0130.nik
+        : canonical0131.nik,
+    };
+
+    if (idx0131 !== -1) {
+      updated[idx0131] = movedSriyono;
+    } else {
+      updated.push(movedSriyono);
+    }
+
+    const existingTutik = updated.find(m => m.id === '0130-2');
+    updated[idx0130] = {
+      ...canonical0130,
+      noKk: existingTutik?.noKk || canonical0130.noKk,
+      alamat: existingTutik?.alamat || canonical0130.alamat,
+      kkUrl: existingTutik?.kkUrl || canonical0130.kkUrl,
+      kkName: existingTutik?.kkName || canonical0130.kkName,
+    };
+    changed = true;
+  }
+
+  // Ensure 0130 (Agus Subriyanto) exists
+  if (!updated.some(m => m.id === '0130')) {
+    const existingTutik = updated.find(m => m.id === '0130-2');
+    updated.push({
+      ...canonical0130,
+      noKk: existingTutik?.noKk || canonical0130.noKk,
+      alamat: existingTutik?.alamat || canonical0130.alamat,
+    });
+    changed = true;
+  }
+
+  // Ensure 0130-2 (Tutik Maryani) exists and links to 0130 (Agus Subriyanto)
+  const idxTutik = updated.findIndex(m => m.id === '0130-2');
+  if (idxTutik === -1) {
+    updated.push(canonical0130_2);
+    changed = true;
+  } else if (
+    updated[idxTutik].kepalaKeluargaId !== '0130' ||
+    updated[idxTutik].namaKepalaKeluarga !== 'Agus Subriyanto'
+  ) {
+    updated[idxTutik] = {
+      ...updated[idxTutik],
+      kepalaKeluargaId: '0130',
+      namaKepalaKeluarga: 'Agus Subriyanto',
+    };
+    changed = true;
+  }
+
+  // Ensure 0131 (Sriyono, SH.MM) exists
+  if (!updated.some(m => m.id === '0131')) {
+    updated.push(canonical0131);
+    changed = true;
+  }
+
+  return { members: updated, changed };
+}
+
 export function getStoredMembers(): Member[] {
+  if (inMemoryMembers && inMemoryMembers.length > 0) {
+    const { members: checked, changed } = ensureAgusAndSriyonoInMemberList(inMemoryMembers);
+    if (changed) {
+      inMemoryMembers = checked;
+    }
+    return inMemoryMembers;
+  }
   if (typeof window === 'undefined') return INITIAL_MEMBERS;
   try {
     const raw = localStorage.getItem(STORAGE_MEMBERS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(INITIAL_MEMBERS));
+      inMemoryMembers = INITIAL_MEMBERS;
+      saveMembers(INITIAL_MEMBERS);
       return INITIAL_MEMBERS;
     }
     const parsed: Member[] = JSON.parse(raw);
     
-    // Auto-migrate any existing member without a syari photo
     let needsUpdate = false;
     const migrated = parsed.map(m => {
       if (!m.fotoUrl || m.fotoUrl.includes('unsplash')) {
@@ -155,25 +430,248 @@ export function getStoredMembers(): Member[] {
       return m;
     });
 
-    if (needsUpdate) {
-      localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(migrated));
-      return migrated;
+    const { members: repaired, changed } = ensureAgusAndSriyonoInMemberList(migrated);
+    inMemoryMembers = repaired;
+
+    if (needsUpdate || changed) {
+      saveMembers(repaired);
     }
 
-    return parsed;
+    return repaired;
   } catch (e) {
-    console.error('Error reading members from localStorage:', e);
-    return INITIAL_MEMBERS;
+    console.warn('Error reading members from localStorage:', e);
+    return inMemoryMembers || INITIAL_MEMBERS;
   }
 }
 
 export function saveMembers(members: Member[]): void {
+  inMemoryMembers = members;
+
   if (typeof window === 'undefined') return;
+
+  saveMembersToIndexedDB(members).catch(() => {});
+
   try {
     localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
-  } catch (e) {
-    console.error('Error saving members to localStorage:', e);
+  } catch (e: any) {
+    const isQuota = e?.name === 'QuotaExceededError' || e?.message?.includes('exceeded the quota') || e?.code === 22;
+    if (isQuota) {
+      try {
+        localStorage.removeItem(STORAGE_DEEP_LOGS_KEY);
+        localStorage.removeItem(STORAGE_REGISTRATION_TRACES_KEY);
+      } catch {}
+
+      try {
+        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+        return;
+      } catch {}
+
+      try {
+        const lightweight = createLightweightMembersForLocalStorage(members);
+        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(lightweight));
+      } catch (err2) {
+        console.warn('LocalStorage fallback note:', err2);
+      }
+    } else {
+      console.warn('Error saving members to localStorage:', e);
+    }
   }
+}
+
+// =========================================================================
+// PENYIMPANAN LOKAL & SINKRONISASI KOLEKSI 'tempdatalama' (DATA TERHAPUS)
+// =========================================================================
+export function getStoredTempDataLama(): Member[] {
+  if (inMemoryTempDataLama) {
+    return inMemoryTempDataLama;
+  }
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_TEMP_DATA_LAMA_KEY);
+    const parsed: Member[] = raw ? JSON.parse(raw) : [];
+    inMemoryTempDataLama = parsed;
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveTempDataLama(tempMembers: Member[]): void {
+  inMemoryTempDataLama = tempMembers;
+  if (typeof window === 'undefined') return;
+
+  saveTempDataLamaToIndexedDB(tempMembers).catch(() => {});
+
+  try {
+    const lightweight = createLightweightMembersForLocalStorage(tempMembers);
+    localStorage.setItem(STORAGE_TEMP_DATA_LAMA_KEY, JSON.stringify(lightweight));
+  } catch (err) {
+    console.warn('TempDataLama localStorage note:', err);
+  }
+}
+
+export interface NikCheckResult {
+  status: 'available' | 'exists_in_members' | 'exists_in_tempdatalama';
+  member?: Member;
+}
+
+/**
+ * Memeriksa keunikan Nomor KTP / KIA (NIK) di koleksi aktif `members` dan koleksi arsip `tempdatalama`.
+ * - Jika NIK sudah terdaftar di `members`: kembalikan `exists_in_members`.
+ * - Jika NIK pernah terdaftar lalu terhapus (ada di `tempdatalama`): kembalikan `exists_in_tempdatalama` beserta datanya.
+ */
+export async function checkNikAvailability(
+  nik: string,
+  excludeMemberId?: string
+): Promise<NikCheckResult> {
+  const cleanNik = (nik || '').trim().replace(/\D/g, '');
+  if (!cleanNik) return { status: 'available' };
+
+  // 1. Cek di cache lokal members
+  const localMembers = getStoredMembers();
+  const foundLocalActive = localMembers.find(
+    m => m.nik.replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
+  );
+  if (foundLocalActive) {
+    return { status: 'exists_in_members', member: foundLocalActive };
+  }
+
+  // 2. Cek di server Firestore members untuk kepastian lintas perangkat
+  try {
+    const remoteMembers = await fetchMembersFromFirestore();
+    const foundRemoteActive = remoteMembers.find(
+      m => (m.nik || '').replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
+    );
+    if (foundRemoteActive) {
+      return { status: 'exists_in_members', member: foundRemoteActive };
+    }
+  } catch (err) {
+    console.warn('Note checking remote members for NIK:', err);
+  }
+
+  // 3. Cek di koleksi tempdatalama (lokal & Firestore) apakah data pernah terdaftar lalu terhapus
+  const localTemp = getStoredTempDataLama();
+  const foundLocalTemp = localTemp.find(m => (m.nik || '').replace(/\D/g, '') === cleanNik);
+  if (foundLocalTemp) {
+    return { status: 'exists_in_tempdatalama', member: foundLocalTemp };
+  }
+
+  try {
+    const remoteTemp = await fetchTempDataLamaFromFirestore();
+    if (remoteTemp.length > 0) {
+      saveTempDataLama(remoteTemp);
+    }
+    const foundRemoteTemp = remoteTemp.find(m => (m.nik || '').replace(/\D/g, '') === cleanNik);
+    if (foundRemoteTemp) {
+      return { status: 'exists_in_tempdatalama', member: foundRemoteTemp };
+    }
+  } catch (err) {
+    console.warn('Note checking remote tempdatalama for NIK:', err);
+  }
+
+  return { status: 'available' };
+}
+
+/**
+ * Mengembalikan (restore) data anggota yang sudah terhapus dari koleksi `tempdatalama`
+ * kembali ke dalam koleksi `members` di Firestore, diverifikasi server, lalu mengirim notifikasi.
+ */
+export async function restoreMemberFromTempDataLamaAsync(
+  deletedMember: Member,
+  overrides?: Partial<Member>,
+  onStatusUpdate?: (status: string) => void
+): Promise<Member> {
+  const traceId = 'RESTORE-' + Date.now().toString(36).toUpperCase();
+  onStatusUpdate?.(`Memulihkan data "${deletedMember.nama}" dari tabel tempdatalama ke koleksi members...`);
+
+  const activeMembers = getStoredMembers();
+  const tempMembers = getStoredTempDataLama();
+
+  // Gunakan ID asli jika belum terpakai di members aktif, atau alokasikan ID unik baru jika ID lama sudah terpakai
+  let targetId = deletedMember.id;
+  const idOccupiedByOther = activeMembers.some(
+    m => m.id === targetId && m.nik.replace(/\D/g, '') !== deletedMember.nik.replace(/\D/g, '')
+  );
+  if (!targetId || idOccupiedByOther) {
+    targetId = await allocateUniqueMemberIdFromServer(
+      deletedMember.kepalaKeluargaId,
+      activeMembers,
+      tempMembers
+    );
+  }
+
+  const restoredMember: Member = {
+    ...deletedMember,
+    ...(overrides || {}),
+    id: targetId,
+    status: overrides?.status || deletedMember.status || 'disetujui',
+    tanggalDaftar: deletedMember.tanggalDaftar || new Date().toISOString(),
+  };
+  delete (restoredMember as any).deletedAt;
+  delete (restoredMember as any).deletedReason;
+
+  // 1. Simpan ke koleksi 'members' di Firestore & verifikasi server
+  await saveMemberWithRetryAndConfirmation(
+    restoredMember,
+    5,
+    onStatusUpdate,
+    traceId,
+    { preventOverwrite: true }
+  );
+
+  // 2. Hapus dari koleksi 'tempdatalama' di Firestore & lokal
+  try {
+    await deleteFromTempDataLamaFirestore(deletedMember.id);
+  } catch (err) {
+    console.warn('Warning removing restored member from tempdatalama:', err);
+  }
+
+  const updatedTemp = tempMembers.filter(
+    m => m.id !== deletedMember.id && m.nik.replace(/\D/g, '') !== deletedMember.nik.replace(/\D/g, '')
+  );
+  saveTempDataLama(updatedTemp);
+
+  // 3. Perbarui daftar anggota lokal agar langsung tampil di Daftar Anggota & Halaman Admin
+  const updatedMembers = [
+    restoredMember,
+    ...getStoredMembers().filter(m => m.id !== restoredMember.id),
+  ];
+  saveMembers(updatedMembers);
+
+  saveDeepRegistrationLog({
+    id: 'log_' + Date.now(),
+    traceId,
+    timestamp: new Date().toISOString(),
+    stage: 'PEMULIHAN_TEMPDATALAMA',
+    title: 'Data Anggota Berhasil Dikembalikan dari tempdatalama',
+    detail: `Data "${restoredMember.nama}" (ID: ${restoredMember.id}, NIK: ${maskNik(restoredMember.nik)}) berhasil dipulihkan ke koleksi members.`,
+    status: 'SUCCESS',
+  });
+
+  // 4. Buat notifikasi di Firestore 'notifications' baru kirimkan ke aplikasi
+  const roleText = getPeranLabel(restoredMember.peranKeluarga);
+  const notif = await addNotificationAsync({
+    memberId: restoredMember.id,
+    memberName: restoredMember.nama,
+    type: restoredMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
+    message: `Data anggota "${restoredMember.nama}" (ID: ${restoredMember.id}, ${roleText}) berhasil dipulihkan kembali dari arsip data lama (tempdatalama).`,
+  });
+
+  soundEffects.playSuccess();
+  triggerSystemNotification(
+    'Data Anggota Dipulihkan',
+    `Data "${restoredMember.nama}" (ID: ${restoredMember.id}) telah dikembalikan ke daftar anggota.`
+  );
+
+  broadcastRealtime({
+    type: 'STATUS_CHANGED',
+    payload: {
+      member: restoredMember,
+      notification: notif,
+    },
+  });
+
+  return restoredMember;
 }
 
 export function getStoredNotifications(): AppNotification[] {
@@ -190,9 +688,13 @@ export function getStoredNotifications(): AppNotification[] {
 export function saveNotifications(notifications: AppNotification[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(notifications));
-  } catch (e) {
-    console.error('Error saving notifications:', e);
+    const trimmed = notifications.slice(0, 30);
+    localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(trimmed));
+  } catch (e: any) {
+    try {
+      localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(notifications.slice(0, 10)));
+    } catch {}
+    console.warn('Error saving notifications to localStorage:', e?.message || e);
   }
 }
 
@@ -203,7 +705,6 @@ export function getCurrentUserSession(): Member | null {
     const raw = localStorage.getItem(STORAGE_USER_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw);
-    // Refresh with latest data from storage
     const all = getStoredMembers();
     const fresh = all.find(m => m.id === session.id);
     if (!fresh || fresh.status !== 'disetujui') {
@@ -219,13 +720,22 @@ export function getCurrentUserSession(): Member | null {
 export function setCurrentUserSession(member: Member | null): void {
   if (typeof window === 'undefined') return;
   if (!member) {
-    localStorage.removeItem(STORAGE_USER_KEY);
+    try {
+      localStorage.removeItem(STORAGE_USER_KEY);
+    } catch {}
   } else {
-    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(member));
+    try {
+      const sessionClean: Member = {
+        ...member,
+        ktpUrl: member.ktpUrl && member.ktpUrl.length > 2000 ? '' : member.ktpUrl,
+        kkUrl: member.kkUrl && member.kkUrl.length > 2000 ? '' : member.kkUrl,
+      };
+      localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(sessionClean));
+    } catch (e: any) {
+      console.warn('Error saving session to localStorage:', e?.message || e);
+    }
   }
 }
-
-import { compressImage } from './imageCompressor';
 
 export function addNotification(notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>): AppNotification {
   const all = getStoredNotifications();
@@ -238,7 +748,6 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
   const updated = [newNotif, ...all.slice(0, 49)];
   saveNotifications(updated);
   
-  // Persist to Firebase Firestore
   addNotificationToFirestore(newNotif).catch(err => {
     console.warn('Firestore notification sync note:', err);
   });
@@ -249,22 +758,24 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
 export async function addNotificationAsync(
   notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>
 ): Promise<AppNotification> {
-  const all = getStoredNotifications();
   const newNotif: AppNotification = {
     ...notification,
     id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
     timestamp: new Date().toISOString(),
     read: false,
   };
-  const updated = [newNotif, ...all.slice(0, 49)];
-  saveNotifications(updated);
-  
-  // Persist to Firebase Firestore
+
+  // 1. Tulis & verifikasi pada koleksi 'notifications' di Firestore terlebih dahulu
   try {
     await addNotificationToFirestore(newNotif);
   } catch (err) {
     console.warn('Firestore notification async warning:', err);
   }
+
+  // 2. Simpan ke state notifikasi lokal setelah tercatat di Firestore
+  const all = getStoredNotifications();
+  const updated = [newNotif, ...all.filter(n => n.id !== newNotif.id).slice(0, 49)];
+  saveNotifications(updated);
 
   return newNotif;
 }
@@ -273,7 +784,6 @@ export function markAllNotificationsAsRead(): void {
   const all = getStoredNotifications().map(n => ({ ...n, read: true }));
   saveNotifications(all);
   
-  // Persist read state to Firebase Firestore
   markAllNotificationsAsReadInFirestore(all).catch(err => {
     console.warn('Firestore notification mark read note:', err);
   });
@@ -342,7 +852,6 @@ export function verifyMemberPin(member: Member, inputPin: string): boolean {
 // Family relationship helper
 export function getFamilyMembers(member: Member, allMembers: Member[]): Member[] {
   if (!member.noKk) return [member];
-  // Match members sharing the same Kartu Keluarga (KK)
   return allMembers.filter(m => m.noKk === member.noKk);
 }
 
@@ -351,7 +860,104 @@ export function getAvailableKepalaKeluarga(allMembers: Member[]): Member[] {
   return allMembers.filter(m => m.peranKeluarga === 'kepala_keluarga' && m.status === 'disetujui');
 }
 
-// Member mutations
+/**
+ * Alur Persetujuan / Penolakan Anggota oleh Admin secara Terverifikasi:
+ * 1. Update status anggota (misal 'disetujui') pada koleksi `members` di Firestore dan verifikasi telah tersimpan di server.
+ * 2. Pastikan data anggota langsung diperbarui dan muncul pada halaman Daftar Anggota (`saveMembers`).
+ * 3. Buat dokumen notifikasi pada koleksi `notifications` di Firestore (`addNotificationAsync`).
+ * 4. Baru kirimkan notifikasi ke aplikasi bahwa anggota sudah disetujui dan resmi terdaftar sebagai anggota.
+ */
+export async function updateMemberStatusAsync(
+  memberId: string,
+  newStatus: MemberStatus,
+  note?: string,
+  onStatusUpdate?: (statusText: string) => void
+): Promise<{ updatedMember: Member | null; notification: AppNotification | null }> {
+  const members = getStoredMembers();
+  const index = members.findIndex(m => m.id === memberId);
+  if (index === -1) return { updatedMember: null, notification: null };
+
+  const prevMember = members[index];
+  const now = new Date().toISOString();
+  
+  let regNumber = prevMember.regNumber;
+  if (newStatus === 'disetujui' && !regNumber) {
+    const year = new Date().getFullYear();
+    const randCode = Math.floor(1000 + Math.random() * 9000);
+    const suffix = prevMember.peranKeluarga === 'istri' ? '-B' : prevMember.peranKeluarga === 'anak' ? '-C' : '';
+    regNumber = `${randCode}/YMWM13/II/${year} & L.${memberId}${suffix}`;
+  }
+
+  const updatedMember: Member = {
+    ...prevMember,
+    status: newStatus,
+    catatanPenolakan: newStatus === 'ditolak' ? (note || 'Data pendaftaran belum memenuhi syarat administrasi.') : undefined,
+    tanggalDisetujui: newStatus === 'disetujui' ? (prevMember.tanggalDisetujui || now) : prevMember.tanggalDisetujui,
+    regNumber,
+  };
+
+  const traceId = 'ACC-' + Date.now().toString(36).toUpperCase();
+  onStatusUpdate?.(`Memperbarui status "${updatedMember.nama}" (ID: ${updatedMember.id}) di koleksi 'members' Firestore...`);
+
+  // LANGKAH 1: Update & verifikasi ke koleksi 'members' di database Firestore terlebih dahulu
+  await saveMemberWithRetryAndConfirmation(
+    updatedMember,
+    4,
+    onStatusUpdate,
+    traceId,
+    { preventOverwrite: false }
+  );
+
+  // LANGKAH 2: Pastikan muncul di halaman Daftar Anggota & Admin
+  const latestMembers = getStoredMembers();
+  const targetIdx = latestMembers.findIndex(m => m.id === memberId);
+  if (targetIdx !== -1) {
+    latestMembers[targetIdx] = updatedMember;
+    saveMembers([...latestMembers]);
+  } else {
+    saveMembers([updatedMember, ...latestMembers]);
+  }
+
+  // LANGKAH 3: Buat dokumen notifikasi di koleksi 'notifications' pada Firestore
+  const roleText = getPeranLabel(updatedMember.peranKeluarga);
+  const statusLabel = newStatus === 'disetujui' ? 'DISETUJUI' : newStatus === 'ditolak' ? 'DITOLAK' : 'MENUNGGU ACC';
+  const messageText =
+    newStatus === 'disetujui'
+      ? `Alhamdulillah, pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah DISETUJUI dan resmi terdaftar di Daftar Anggota.`
+      : `Status pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah diubah menjadi ${statusLabel}.`;
+
+  onStatusUpdate?.(`Mencatat notifikasi persetujuan ke koleksi 'notifications' Firestore...`);
+  const notification = await addNotificationAsync({
+    memberId: updatedMember.id,
+    memberName: updatedMember.nama,
+    type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
+    message: messageText,
+  });
+
+  // LANGKAH 4: Kirimkan notifikasi ke aplikasi & bunyi indikator
+  if (newStatus === 'disetujui') {
+    soundEffects.playSuccess();
+  } else if (newStatus === 'ditolak') {
+    soundEffects.playWarning();
+  }
+
+  triggerSystemNotification(
+    `Status Keanggotaan: ${statusLabel}`,
+    messageText
+  );
+
+  broadcastRealtime({
+    type: 'STATUS_CHANGED',
+    payload: {
+      member: updatedMember,
+      notification,
+    },
+  });
+
+  return { updatedMember, notification };
+}
+
+// Synchronous wrapper for compatibility
 export function updateMemberStatus(
   memberId: string,
   newStatus: MemberStatus,
@@ -383,7 +989,6 @@ export function updateMemberStatus(
   members[index] = updatedMember;
   saveMembers(members);
 
-  // Persist update to Firebase Firestore
   saveMemberToFirestore(updatedMember).catch(err => {
     console.warn('Firestore member status sync note:', err);
   });
@@ -394,12 +999,13 @@ export function updateMemberStatus(
     soundEffects.playWarning();
   }
 
+  const roleText = getPeranLabel(updatedMember.peranKeluarga);
   const statusLabel = newStatus === 'disetujui' ? 'DISETUJUI' : newStatus === 'ditolak' ? 'DITOLAK' : 'MENUNGGU ACC';
   const notification = addNotification({
     memberId: updatedMember.id,
     memberName: updatedMember.nama,
     type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
-    message: `Status pendaftaran "${updatedMember.nama}" (${getPeranLabel(updatedMember.peranKeluarga)}) telah diubah menjadi ${statusLabel}.`,
+    message: `Status pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah diubah menjadi ${statusLabel}.`,
   });
 
   triggerSystemNotification(
@@ -481,55 +1087,17 @@ export async function addNewMemberAsync(
   let assignedId = '';
   let payloadKB = 0;
   const roleText = getPeranLabel(data.peranKeluarga);
-  const nikMasked = data.nik ? data.nik.slice(0, 6) + '******' + data.nik.slice(-4) : '-';
+  const cleanNik = (data.nik || '').trim().replace(/\D/g, '');
+  const nikMasked = cleanNik ? cleanNik.slice(0, 6) + '******' + cleanNik.slice(-4) : '-';
 
   try {
     // -------------------------------------------------------------
-    // LANGKAH 1: INISIALISASI PENDAFTARAN & ALOKASI ID UNIK
-    // -------------------------------------------------------------
-    const step1Start = Date.now();
-    const members = getStoredMembers();
-    
-    // Generate non-colliding ID e.g. '0120'
-    const maxNum = members.reduce((max, m) => {
-      const root = m.id.split('-')[0];
-      const num = parseInt(root, 10);
-      return !isNaN(num) && num > max ? num : max;
-    }, 118);
-
-    let nextNum = maxNum + 1;
-    let nextId = String(nextNum).padStart(4, '0');
-    
-    // If family member added to existing head of family
-    if (data.kepalaKeluargaId) {
-      const existingFamilyCount = members.filter(m => m.kepalaKeluargaId === data.kepalaKeluargaId || m.id === data.kepalaKeluargaId).length;
-      nextId = `${data.kepalaKeluargaId}-${existingFamilyCount + 1}`;
-    }
-
-    // Ensure nextId does not collide with existing member
-    while (members.some(m => m.id === nextId)) {
-      nextNum++;
-      nextId = String(nextNum).padStart(4, '0');
-    }
-    assignedId = nextId;
-    const step1Duration = Date.now() - step1Start;
-
-    logDeep(
-      'INISIALISASI',
-      'Inisialisasi Data & Alokasi ID Anggota',
-      `ID: ${assignedId}, Nama: "${data.nama}", Peran: ${roleText}, NIK: ${nikMasked}, No. KK: ${data.noKk}`,
-      'INFO',
-      step1Duration,
-      { assignedId, nama: data.nama, role: roleText, noKk: data.noKk, nikMasked }
-    );
-
-    // -------------------------------------------------------------
-    // LANGKAH 2: PENGECEKAN STATUS KONEKSI FIRESTORE (LIVE PRE-CHECK)
+    // LANGKAH 1: PENGECEKAN STATUS KONEKSI FIRESTORE (LIVE PRE-CHECK)
     // -------------------------------------------------------------
     onStatusUpdate?.('Memeriksa status konektivitas live ke server database Firestore...');
-    const step2Start = Date.now();
+    const connStart = Date.now();
     const connStatus = await checkFirestoreConnectionStatus();
-    const connDuration = Date.now() - step2Start;
+    const connDuration = Date.now() - connStart;
 
     if (!connStatus.online) {
       if (connStatus.quotaExceeded) {
@@ -564,7 +1132,51 @@ export async function addNewMemberAsync(
     );
 
     // -------------------------------------------------------------
-    // LANGKAH 3: PRE-FLIGHT KOMPRESI LAMPIRAN & KALKULASI UKURAN PAYLOAD
+    // LANGKAH 2: VALIDASI KEUNIKAN NOMOR KTP (NIK) & CEK TEMPDATALAMA
+    // -------------------------------------------------------------
+    onStatusUpdate?.('Memvalidasi keunikan Nomor KTP (NIK) di database...');
+    const nikStart = Date.now();
+    const nikCheck = await checkNikAvailability(cleanNik);
+    const nikDuration = Date.now() - nikStart;
+
+    if (nikCheck.status === 'exists_in_members' && nikCheck.member) {
+      const msg = `Nomor KTP/NIK ${cleanNik} sudah terdaftar aktif atas nama "${nikCheck.member.nama}" (ID Anggota: ${nikCheck.member.id}). Nomor KTP harus unik dan tidak dapat didaftarkan ganda.`;
+      logDeep('VALIDASI_UNIK_NIK_ID', 'Nomor KTP (NIK) Sudah Terdaftar Aktif', msg, 'ERROR', nikDuration);
+      throw new Error(msg);
+    }
+
+    if (nikCheck.status === 'exists_in_tempdatalama' && nikCheck.member) {
+      const msg = `NIK_IN_TEMPDATALAMA::Data dengan Nomor KTP ${cleanNik} pernah terdaftar atas nama "${nikCheck.member.nama}" (ID: ${nikCheck.member.id}) yang telah terhapus. Silakan pilih opsi kembalikan data lama.`;
+      logDeep('VALIDASI_UNIK_NIK_ID', 'Nomor KTP Ditemukan di Arsip tempdatalama', msg, 'WARN', nikDuration);
+      throw new Error(msg);
+    }
+
+    // -------------------------------------------------------------
+    // LANGKAH 3: ALOKASI ID ANGGOTA UNIK DARI SERVER (ANTI-TIMPA & MONOTONIK)
+    // -------------------------------------------------------------
+    onStatusUpdate?.('Mengalokasikan Nomor ID Anggota unik dari server Firestore...');
+    const idStart = Date.now();
+    const localMembers = getStoredMembers();
+    const localTempMembers = getStoredTempDataLama();
+
+    assignedId = await allocateUniqueMemberIdFromServer(
+      data.kepalaKeluargaId,
+      localMembers,
+      localTempMembers
+    );
+    const idDuration = Date.now() - idStart;
+
+    logDeep(
+      'INISIALISASI',
+      'Alokasi Primary Key ID Anggota Unik & Anti-Timpa',
+      `ID Unik: ${assignedId}, Nama: "${data.nama}", Peran: ${roleText}, NIK: ${nikMasked}, No. KK: ${data.noKk}`,
+      'SUCCESS',
+      idDuration,
+      { assignedId, nama: data.nama, role: roleText, noKk: data.noKk, nikMasked }
+    );
+
+    // -------------------------------------------------------------
+    // LANGKAH 4: PRE-FLIGHT KOMPRESI LAMPIRAN & KALKULASI UKURAN PAYLOAD
     // -------------------------------------------------------------
     const step3Start = Date.now();
     onStatusUpdate?.('Memeriksa & mengompresi berkas lampiran (Pas Foto, KTP, KK)...');
@@ -590,8 +1202,9 @@ export async function addNewMemberAsync(
     const now = new Date().toISOString();
     const initialStatus = data.status || 'menunggu';
 
-    const newMember: Member = {
+    let newMember: Member = {
       ...data,
+      nik: cleanNik,
       id: assignedId,
       fotoUrl: compressedFoto,
       ktpUrl: compressedKtp,
@@ -605,7 +1218,6 @@ export async function addNewMemberAsync(
       newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
     }
 
-    // Hitung ukuran payload (bytes & KB)
     let payloadBytes = 0;
     try {
       payloadBytes = new Blob([JSON.stringify(newMember)]).size;
@@ -626,37 +1238,60 @@ export async function addNewMemberAsync(
     );
 
     // -------------------------------------------------------------
-    // LANGKAH 4: PENULISAN DATA KE KOLEKSI 'members' (DENGAN RETRY LOGIC)
+    // LANGKAH 5: PENULISAN DATA KE KOLEKSI 'members' (DENGAN COLLISION GUARD)
     // -------------------------------------------------------------
     const step4Start = Date.now();
     onStatusUpdate?.('Mengirimkan data anggota ke koleksi "members" Firestore...');
 
-    const writeResult = await saveMemberWithRetryAndConfirmation(
-      newMember,
-      5,
-      (status) => onStatusUpdate?.(`[Trace: ${traceId}] ${status}`),
-      traceId
-    );
+    let writeResult;
+    try {
+      writeResult = await saveMemberWithRetryAndConfirmation(
+        newMember,
+        5,
+        (status) => onStatusUpdate?.(`[Trace: ${traceId}] ${status}`),
+        traceId,
+        { preventOverwrite: true }
+      );
+    } catch (writeErr: any) {
+      // Jika terjadi benturan ID secara bersamaan dari perangkat lain, alokasikan ID baru dan simpan ulang tanpa menimpa data lama!
+      if (String(writeErr?.message || '').includes('ID_COLLISION_GUARD')) {
+        assignedId = await allocateUniqueMemberIdFromServer(
+          data.kepalaKeluargaId,
+          getStoredMembers(),
+          getStoredTempDataLama()
+        );
+        newMember = { ...newMember, id: assignedId };
+        writeResult = await saveMemberWithRetryAndConfirmation(
+          newMember,
+          5,
+          (status) => onStatusUpdate?.(`[Trace: ${traceId}] ${status}`),
+          traceId,
+          { preventOverwrite: true }
+        );
+      } else {
+        throw writeErr;
+      }
+    }
 
     const step4Duration = Date.now() - step4Start;
     logDeep(
       'PENULISAN_DATA_MEMBERS',
       'Penulisan Dokumen ke Koleksi members',
-      `Penulisan dokumen "${newMember.nama}" (ID: ${newMember.id}) berhasil pada percobaan ke-${writeResult.totalAttempts} dalam ${writeResult.totalDurationMs}ms`,
+      `Penulisan dokumen "${newMember.nama}" (ID: ${newMember.id}, Status: ${newMember.status}) berhasil pada percobaan ke-${writeResult.totalAttempts} dalam ${writeResult.totalDurationMs}ms`,
       'SUCCESS',
       step4Duration,
       { attempts: writeResult.totalAttempts, totalDurationMs: writeResult.totalDurationMs, memberId: newMember.id }
     );
 
     // -------------------------------------------------------------
-    // LANGKAH 5: MEKANISME PENGECEKAN (POLLING) 3 DETIK DI KOLEKSI 'members'
+    // LANGKAH 6: MEKANISME PENGECEKAN (POLLING) 3 DETIK DI KOLEKSI 'members'
     // -------------------------------------------------------------
     onStatusUpdate?.('Menjalankan mekanisme verifikasi polling 3 detik ke koleksi "members"...');
     const step5Start = Date.now();
 
     const pollingResult = await pollVerifyMemberInMembersCollection3Seconds(
       newMember.id,
-      { nama: newMember.nama, nik: newMember.nik },
+      { nama: newMember.nama, nik: newMember.nik, status: newMember.status },
       onStatusUpdate
     );
 
@@ -684,7 +1319,7 @@ export async function addNewMemberAsync(
     );
 
     // -------------------------------------------------------------
-    // LANGKAH 6: KONFIRMASI PENULISAN DATA BERHASIL
+    // LANGKAH 7: KONFIRMASI PENULISAN DATA BERHASIL & MASUK DAFTAR TUNGGU ADMIN
     // -------------------------------------------------------------
     logDeep(
       'KONFIRMASI_BERHASIL',
@@ -695,9 +1330,6 @@ export async function addNewMemberAsync(
       { memberId: newMember.id, nama: newMember.nama, status: newMember.status }
     );
 
-    // -------------------------------------------------------------
-    // LANGKAH 7: SINKRONISASI DATA LOKAL & REALTIME BROADCAST
-    // -------------------------------------------------------------
     const step7Start = Date.now();
     const freshMembers = getStoredMembers();
     const updated = [newMember, ...freshMembers.filter(m => m.id !== newMember.id)];
@@ -707,28 +1339,31 @@ export async function addNewMemberAsync(
 
     logDeep(
       'SINKRONISASI_LOCAL_STATE',
-      'Penyimpanan ke Cache Lokal & Broadcast Real-Time',
-      `Data anggota tersimpan di cache browser. Total anggota tersimpan: ${updated.length}`,
+      'Masuk ke Halaman Admin (Tab Menunggu) & Cache Lokal',
+      `Data anggota "${newMember.nama}" (ID: ${newMember.id}) telah masuk ke daftar anggota status "${newMember.status}". Total anggota: ${updated.length}`,
       'SUCCESS',
       step7Duration,
-      { totalMembers: updated.length }
+      { totalMembers: updated.length, status: newMember.status }
     );
 
     // -------------------------------------------------------------
-    // LANGKAH 8: PENERBITAN NOTIFIKASI SUKSES KE ADMIN
-    // (Hanya dikirim karena dokumen sudah 100% dipastikan terbaca di Firestore)
+    // LANGKAH 8: PEMBUATAN DOKUMEN NOTIFIKASI DI FIRESTORE 'notifications'
+    // BARU KEMUDIAN DIKIRIMKAN KE APLIKASI
     // -------------------------------------------------------------
     const step8Start = Date.now();
-    onStatusUpdate?.('Menerbitkan notifikasi pendaftaran terverifikasi ke admin...');
+    onStatusUpdate?.('Membuat data notifikasi pada tabel "notifications" di Firestore...');
 
     const notification = await addNotificationAsync({
       memberId: newMember.id,
       memberName: newMember.nama,
-      type: 'new_registration',
-      message: `Pendaftaran baru: "${newMember.nama}" sebagai ${roleText} (No. KK: ${newMember.noKk}). Menunggu verifikasi pengurus.`,
+      type: newMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
+      message:
+        newMember.status === 'disetujui'
+          ? `Anggota baru "${newMember.nama}" (ID: ${newMember.id}, ${roleText}) telah ditambahkan dan langsung disetujui.`
+          : `Pendaftaran baru: "${newMember.nama}" (ID: ${newMember.id}) sebagai ${roleText} (No. KK: ${newMember.noKk}) telah masuk ke database dan menunggu persetujuan pengurus/admin.`,
     });
 
-    triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (${roleText})`);
+    triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (ID: ${newMember.id} - ${roleText})`);
 
     broadcastRealtime({
       type: 'NEW_REGISTRATION',
@@ -741,8 +1376,8 @@ export async function addNewMemberAsync(
     const step8Duration = Date.now() - step8Start;
     logDeep(
       'PENERBITAN_NOTIFIKASI_ADMIN',
-      'Notifikasi Sukses Diterbitkan ke Admin',
-      `Notifikasi berhasil dikirimkan ke database & broadcast (Notif ID: ${notification.id})`,
+      'Notifikasi Tersimpan di Koleksi notifications & Diterbitkan ke Aplikasi',
+      `Notifikasi berhasil disimpan di Firestore notifications & dikirim ke aplikasi (Notif ID: ${notification.id})`,
       'SUCCESS',
       step8Duration,
       { notificationId: notification.id }
@@ -766,7 +1401,7 @@ export async function addNewMemberAsync(
     };
     saveRegistrationTrace(finalTrace);
 
-    console.log(`[Trace:${traceId}] SUKSES PARIPURNA: "${newMember.nama}" terdaftar & diverifikasi polling 3 detik dalam ${totalDurationMs}ms!`);
+    console.log(`[Trace:${traceId}] SUKSES PARIPURNA: "${newMember.nama}" (ID: ${assignedId}) terdaftar & diverifikasi polling 3 detik dalam ${totalDurationMs}ms!`);
     console.groupEnd();
 
     return newMember;
@@ -801,6 +1436,10 @@ export async function addNewMemberAsync(
     console.error(`[Trace:${traceId}] GAGAL PENDAFTARAN:`, error);
     console.groupEnd();
 
+    if (errorMsg.startsWith('NIK_IN_TEMPDATALAMA::')) {
+      throw new Error(errorMsg.replace('NIK_IN_TEMPDATALAMA::', ''));
+    }
+
     let userFriendlyMsg = 'Gagal menyimpan dan memverifikasi data di database server.';
     if (isFirestoreQuotaError(error)) {
       notifyQuotaLimitExceeded(errorMsg);
@@ -814,20 +1453,19 @@ export async function addNewMemberAsync(
       userFriendlyMsg = `${errorMsg}`;
     }
 
-    throw new Error(`[ID Pelacakan: ${traceId}] ${userFriendlyMsg}`);
+    throw new Error(userFriendlyMsg);
   }
 }
 
 export function addNewMember(
   data: Omit<Member, 'id' | 'tanggalDaftar' | 'status'> & { status?: MemberStatus }
 ): Member {
-  // Sync wrapper that safely triggers async tracked save in background
   const members = getStoredMembers();
   const maxNum = members.reduce((max, m) => {
     const root = m.id.split('-')[0];
     const num = parseInt(root, 10);
     return !isNaN(num) && num > max ? num : max;
-  }, 118);
+  }, 131);
 
   let nextId = String(maxNum + 1).padStart(4, '0');
   if (data.kepalaKeluargaId) {
@@ -850,7 +1488,6 @@ export function addNewMember(
     newMember.jumlahKeluarga = data.jumlahKeluarga || 1;
   }
 
-  // Trigger tracked async flow in background
   addNewMemberAsync(data).catch(err => {
     console.error('Async member save note:', err);
   });
@@ -859,6 +1496,15 @@ export function addNewMember(
 }
 
 export async function updateMemberAsync(updatedMember: Member): Promise<Member> {
+  // Validasi keunikan NIK terhadap anggota aktif lainnya
+  const cleanNik = (updatedMember.nik || '').trim().replace(/\D/g, '');
+  const nikCheck = await checkNikAvailability(cleanNik, updatedMember.id);
+  if (nikCheck.status === 'exists_in_members' && nikCheck.member) {
+    throw new Error(
+      `Nomor KTP/NIK ${cleanNik} sudah terdaftar pada anggota lain atas nama "${nikCheck.member.nama}" (ID: ${nikCheck.member.id}).`
+    );
+  }
+
   let compressedFoto = updatedMember.fotoUrl;
   let compressedKtp = updatedMember.ktpUrl;
   let compressedKk = updatedMember.kkUrl;
@@ -879,13 +1525,14 @@ export async function updateMemberAsync(updatedMember: Member): Promise<Member> 
 
   const finalMember: Member = {
     ...updatedMember,
+    nik: cleanNik || updatedMember.nik,
     fotoUrl: compressedFoto,
     ktpUrl: compressedKtp,
     kkUrl: compressedKk,
   };
 
   try {
-    await saveMemberToFirestore(finalMember);
+    await saveMemberWithRetryAndConfirmation(finalMember, 4, undefined, 'UPD-' + finalMember.id);
   } catch (err: any) {
     if (isFirestoreQuotaError(err)) {
       notifyQuotaLimitExceeded(err?.message || String(err));
@@ -939,14 +1586,54 @@ export function updateMember(updatedMember: Member): void {
   }
 }
 
-export function deleteMember(id: string): void {
+/**
+ * Menghapus anggota dari koleksi aktif `members`, namun terlebih dahulu memindahkannya
+ * ke tabel / koleksi sementara `tempdatalama` agar dapat dikembalikan sewaktu-waktu,
+ * serta mencatat ID-nya ke counter sistem agar nomor ID tersebut TIDAK PERNAH dipakai ulang.
+ */
+export async function deleteMemberAsync(id: string, reason?: string): Promise<void> {
   const members = getStoredMembers();
+  const target = members.find(m => m.id === id);
+
+  if (target) {
+    const archivedMember: Member = {
+      ...target,
+      deletedAt: new Date().toISOString(),
+      deletedReason: reason || 'Dihapus oleh Admin (Tersimpan di tempdatalama)',
+    };
+
+    // 1. Simpan ke koleksi 'tempdatalama' di Firestore & lokal
+    const currentTemp = getStoredTempDataLama();
+    const updatedTemp = [
+      archivedMember,
+      ...currentTemp.filter(m => m.id !== archivedMember.id && m.nik !== archivedMember.nik),
+    ];
+    saveTempDataLama(updatedTemp);
+
+    try {
+      await saveToTempDataLamaFirestore(archivedMember);
+    } catch (err) {
+      console.warn('Firestore saveToTempDataLama note:', err);
+    }
+  } else {
+    // Tetap pastikan ID tercatat sebagai sudah pernah digunakan
+    await recordAllocatedIdInCounter(id);
+  }
+
+  // 2. Hapus dari koleksi aktif 'members'
   const filtered = members.filter(m => m.id !== id);
   saveMembers(filtered);
 
-  // Delete from Firebase Firestore
-  deleteMemberFromFirestore(id).catch(err => {
-    console.warn('Firestore delete member sync note:', err);
+  try {
+    await deleteMemberFromFirestore(id);
+  } catch (err) {
+    console.warn('Firestore delete member note:', err);
+  }
+}
+
+export function deleteMember(id: string): void {
+  deleteMemberAsync(id).catch(err => {
+    console.warn('Async deleteMember note:', err);
   });
 }
 
@@ -955,7 +1642,6 @@ export function resetToInitialData(): void {
   saveNotifications([]);
   setCurrentUserSession(null);
 
-  // Reseed Firebase Firestore
   INITIAL_MEMBERS.forEach(m => {
     saveMemberToFirestore(m).catch(console.warn);
   });
@@ -1044,7 +1730,7 @@ export const INITIAL_ACTIVITIES: Activity[] = [
     jamSelesai: '22:00',
     lokasi: 'Aula Utama Gedung Yayasan Al Ikhlas Sembilan Satu Dalung',
     deskripsi: 'Evaluasi program kerja semester berjalan, laporan keuangan yayasan, dan pembahasan persiapan haul akbar.',
-    pesertaIds: ['0114', '0115', '0116'],
+    pesertaIds: ['0114', '0115', '0116', '0130', '0131'],
     kehadiran: [
       {
         memberId: '0114',
@@ -1070,7 +1756,7 @@ export const INITIAL_ACTIVITIES: Activity[] = [
     jamSelesai: '21:00',
     lokasi: 'Masjid Al Ikhlas Dalung Permai',
     deskripsi: 'Kajian kitab Riyadhus Shalihin bersama Ustadz dan ramah tamah seluruh keluarga anggota Yayasan.',
-    pesertaIds: ['0114', '0114-1', '0114-2', '0115', '0115-1', '0116'],
+    pesertaIds: ['0114', '0114-1', '0114-2', '0115', '0115-1', '0116', '0130', '0130-2', '0131'],
     kehadiran: [],
     createdAt: '2026-10-21T09:00:00.000Z',
     updatedAt: '2026-10-21T09:00:00.000Z',
@@ -1084,7 +1770,7 @@ export const INITIAL_ACTIVITIES: Activity[] = [
     jamSelesai: '18:00',
     lokasi: 'Kediaman Bpk. Margo Suwito Utomo, Perum Kodam Blok G No. 3',
     deskripsi: 'Pertemuan silaturahmi berkala, penarikan arisan putaran November, dan diskusi santai keluarga.',
-    pesertaIds: ['0114', '0114-1', '0115', '0115-1', '0116'],
+    pesertaIds: ['0114', '0114-1', '0115', '0115-1', '0116', '0130', '0130-2', '0131'],
     kehadiran: [],
     createdAt: '2026-10-21T10:00:00.000Z',
     updatedAt: '2026-10-21T10:00:00.000Z',
@@ -1158,10 +1844,6 @@ export function deleteActivity(id: string): void {
   saveActivities(filtered);
 }
 
-/**
- * Mencatat kehadiran anggota pada kegiatan tertentu.
- * Jika anggota belum masuk pesertaIds, autoAdd to pesertaIds jika dikonfirmasi.
- */
 export function recordAttendance(
   activityId: string, 
   member: Member, 
@@ -1173,7 +1855,6 @@ export function recordAttendance(
     return { success: false, alreadyAttended: false, isNewToPeserta: false, error: 'Kegiatan tidak ditemukan.' };
   }
 
-  // Cek apakah sudah pernah scan hadir
   const already = activity.kehadiran.some(k => k.memberId === member.id);
   if (already) {
     return { success: false, alreadyAttended: true, isNewToPeserta: false, error: 'Anggota sudah tercatat hadir pada kegiatan ini.' };
@@ -1184,7 +1865,6 @@ export function recordAttendance(
 
   if (!isAlreadyInPeserta) {
     if (!forceAddToPeserta) {
-      // Perlu konfirmasi admin
       return { success: false, alreadyAttended: false, isNewToPeserta: true, error: 'NOT_IN_PESERTA_NEED_CONFIRMATION' };
     } else {
       activity.pesertaIds.push(member.id);
@@ -1240,4 +1920,3 @@ export function getActivityTypeBadgeClass(jenis: ActivityType): { bg: string; te
       return { bg: 'bg-gray-50', text: 'text-gray-800', border: 'border-gray-200' };
   }
 }
-

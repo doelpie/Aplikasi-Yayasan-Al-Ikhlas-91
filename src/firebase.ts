@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import rawConfig from '../firebase-applet-config.json';
 import { Member, AppNotification } from './types';
-import { INITIAL_MEMBERS } from './data/initialData';
+import { INITIAL_MEMBERS, SYARI_PHOTOS } from './data/initialData';
 
 // Support VITE_ environment variables (safe for git/production) with local fallback
 export const firebaseConfig = {
@@ -35,6 +35,13 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 // Initialize Auth
 export const auth = getAuth(app);
+
+// Collection paths
+export const MEMBERS_COLLECTION = 'members';
+export const TEMP_DATA_LAMA_COLLECTION = 'tempdatalama';
+export const SYSTEM_COUNTERS_COLLECTION = 'system_counters';
+export const NOTIFICATIONS_COLLECTION = 'notifications';
+const SEEDED_FLAG_KEY = 'yayasan_alikhlas_firestore_seeded_v1';
 
 // Error Handling Definition
 export enum OperationType {
@@ -144,7 +151,6 @@ export interface FirestoreConnectionCheckResult {
 export async function checkFirestoreConnectionStatus(): Promise<FirestoreConnectionCheckResult> {
   const start = Date.now();
   try {
-    // Ping Firestore with getDocFromServer
     await getDocFromServer(doc(db, 'connection_check', 'ping'));
     const latencyMs = Date.now() - start;
     return { online: true, latencyMs, message: `Terhubung ke server Firestore (${latencyMs}ms)` };
@@ -163,7 +169,6 @@ export async function checkFirestoreConnectionStatus(): Promise<FirestoreConnect
     if (msg.includes('the client is offline') || msg.includes('unavailable')) {
       return { online: false, latencyMs, message: 'Koneksi client offline atau tidak dapat menjangkau server Firestore' };
     }
-    // Document not found or rule check still confirms the server is reachable and active
     return { online: true, latencyMs, message: `Server Firestore aktif & merespon (${latencyMs}ms)` };
   }
 }
@@ -230,8 +235,9 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
           const idMatches = data.id === memberId;
           const namaMatches = !expectedData?.nama || data.nama === expectedData.nama;
           const nikMatches = !expectedData?.nik || data.nik === expectedData.nik;
+          const statusMatches = !expectedData?.status || data.status === expectedData.status;
 
-          if (idMatches && namaMatches && nikMatches) {
+          if (idMatches && namaMatches && nikMatches && statusMatches) {
             readSuccessCount++;
             console.log(`[POLLING_3_DETIK] Siklus ${pollCount}: Data '${memberId}' BERHASIL TERBACA di server Firestore (${pollLatency}ms, berjalan ${elapsedSec}s). Valid: OK.`);
           } else {
@@ -283,11 +289,6 @@ export async function pollVerifyMemberInMembersCollection3Seconds(
   };
 }
 
-// Collection paths
-const MEMBERS_COLLECTION = 'members';
-const NOTIFICATIONS_COLLECTION = 'notifications';
-const SEEDED_FLAG_KEY = 'yayasan_alikhlas_firestore_seeded_v1';
-
 // Clean object to avoid undefined fields in Firestore
 function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
   const result: any = {};
@@ -299,19 +300,397 @@ function cleanForFirestore<T extends Record<string, any>>(obj: T): T {
   return result;
 }
 
-// Seed initial members if database is empty
+// Canonical defaults for 0130 (Agus Subriyanto), 0130-2 (Tutik Maryani), and 0131 (Sriyono, SH.MM)
+const CANONICAL_AGUS_0130: Member = INITIAL_MEMBERS.find(m => m.id === '0130') || {
+  id: '0130',
+  regNumber: '1630/YMWM13/II/2026 & L.0130',
+  nik: '5103051806770130',
+  nama: 'Agus Subriyanto',
+  noKk: '5103051908060130',
+  peranKeluarga: 'kepala_keluarga',
+  tempatTanggalLahir: 'Banyuwangi, 18 Juni 1977',
+  alamat: 'Perum Dalung Permai Lingkungan Banjar Tegal Jaya, Desa Dalung, Kuta Utara, Badung',
+  jumlahKeluarga: 2,
+  noHp: '081236780130',
+  email: 'agus.subriyanto@gmail.com',
+  fotoUrl: SYARI_PHOTOS.kepalaKeluargaMargo,
+  status: 'disetujui',
+  tanggalDaftar: '2026-10-24T08:00:00.000Z',
+  tanggalDisetujui: '2026-10-25T09:00:00.000Z',
+};
+
+const CANONICAL_TUTIK_0130_2: Member = INITIAL_MEMBERS.find(m => m.id === '0130-2') || {
+  id: '0130-2',
+  regNumber: '1630/YMWM13/II/2026 & L.0130-B',
+  nik: '5103055209800130',
+  nama: 'Tutik Maryani',
+  noKk: '5103051908060130',
+  peranKeluarga: 'istri',
+  kepalaKeluargaId: '0130',
+  namaKepalaKeluarga: 'Agus Subriyanto',
+  tempatTanggalLahir: 'Jember, 12 September 1980',
+  alamat: 'Perum Dalung Permai Lingkungan Banjar Tegal Jaya, Desa Dalung, Kuta Utara, Badung',
+  noHp: '081236780132',
+  email: 'tutik.maryani@gmail.com',
+  fotoUrl: SYARI_PHOTOS.istriSitiAminah,
+  status: 'disetujui',
+  tanggalDaftar: '2026-10-24T08:15:00.000Z',
+  tanggalDisetujui: '2026-10-25T09:05:00.000Z',
+};
+
+const CANONICAL_SRIYONO_0131: Member = INITIAL_MEMBERS.find(m => m.id === '0131') || {
+  id: '0131',
+  regNumber: '1631/YMWM13/II/2026 & L.0131',
+  nik: '5103051003750131',
+  nama: 'Sriyono, SH.MM',
+  noKk: '5103052204040131',
+  peranKeluarga: 'kepala_keluarga',
+  tempatTanggalLahir: 'Surakarta, 10 Maret 1975',
+  alamat: 'Perumahan Bumi Dalung Permai, Desa Dalung, Kuta Utara, Badung',
+  jumlahKeluarga: 1,
+  noHp: '081239880131',
+  email: 'sriyono.shmm@gmail.com',
+  fotoUrl: SYARI_PHOTOS.kepalaKeluargaJajat,
+  status: 'disetujui',
+  tanggalDaftar: '2026-10-26T09:00:00.000Z',
+  tanggalDisetujui: '2026-10-26T10:30:00.000Z',
+};
+
+let isRepairRunning = false;
+
+/**
+ * Memperbaiki data live di Firestore & lokal:
+ * 1. Jika dokumen ID '0130' tertimpa oleh "Sriyono, SH.MM", pindahkan data Sriyono ke ID '0131'.
+ * 2. Kembalikan data ID '0130' atas nama "Agus Subriyanto" (Kepala Keluarga dari istri ID '0130-2' Tutik Maryani).
+ * 3. Pastikan ID '0130' (Agus Subriyanto), '0130-2' (Tutik Maryani), dan '0131' (Sriyono, SH.MM) semuanya lengkap & sinkron.
+ */
+export async function repairAgusAndSriyonoDataInFirestore(currentMembers?: Member[]): Promise<Member[] | null> {
+  if (isRepairRunning) return null;
+  isRepairRunning = true;
+
+  try {
+    let list: Member[] = currentMembers && currentMembers.length > 0 ? [...currentMembers] : [];
+    if (list.length === 0) {
+      const snap = await getDocs(collection(db, MEMBERS_COLLECTION));
+      snap.forEach((d) => list.push(d.data() as Member));
+    }
+
+    const doc0130 = list.find(m => m.id === '0130');
+    const doc0130_2 = list.find(m => m.id === '0130-2' || m.nama.toLowerCase().includes('tutik maryani'));
+    const doc0131 = list.find(m => m.id === '0131');
+    const anySriyono = list.find(m => m.nama.toLowerCase().includes('sriyono'));
+    const anyAgus = list.find(m => m.nama.toLowerCase().includes('agus subriyanto'));
+
+    let modified = false;
+
+    // 1. Jika 0130 berisi Sriyono atau Sriyono belum berada di 0131
+    if ((doc0130 && doc0130.nama.toLowerCase().includes('sriyono')) || !doc0131 || !doc0131.nama.toLowerCase().includes('sriyono')) {
+      const sourceSriyono = (doc0130 && doc0130.nama.toLowerCase().includes('sriyono'))
+        ? doc0130
+        : (anySriyono || CANONICAL_SRIYONO_0131);
+
+      const sriyonoFixed: Member = {
+        ...CANONICAL_SRIYONO_0131,
+        ...sourceSriyono,
+        id: '0131',
+        nama: sourceSriyono.nama.toLowerCase().includes('sriyono') ? sourceSriyono.nama : 'Sriyono, SH.MM',
+        peranKeluarga: 'kepala_keluarga',
+        status: sourceSriyono.status || 'disetujui',
+        regNumber: sourceSriyono.regNumber
+          ? sourceSriyono.regNumber.replace(/0130/g, '0131')
+          : CANONICAL_SRIYONO_0131.regNumber,
+        nik: (sourceSriyono.nik && sourceSriyono.nik !== CANONICAL_AGUS_0130.nik)
+          ? sourceSriyono.nik
+          : CANONICAL_SRIYONO_0131.nik,
+      };
+
+      await setDoc(doc(db, MEMBERS_COLLECTION, '0131'), cleanForFirestore(sriyonoFixed));
+      list = [sriyonoFixed, ...list.filter(m => m.id !== '0131')];
+      modified = true;
+      console.log('[DATA_REPAIR] Data "Sriyono, SH.MM" berhasil dipindahkan/dipastikan pada ID 0131.');
+    }
+
+    // 2. Pastikan 0130-2 (Tutik Maryani) ada dan terhubung ke Kepala Keluarga 0130 (Agus Subriyanto)
+    const tutikFixed: Member = doc0130_2
+      ? {
+          ...CANONICAL_TUTIK_0130_2,
+          ...doc0130_2,
+          id: '0130-2',
+          nama: doc0130_2.nama || 'Tutik Maryani',
+          peranKeluarga: 'istri',
+          kepalaKeluargaId: '0130',
+          namaKepalaKeluarga: 'Agus Subriyanto',
+          status: doc0130_2.status || 'disetujui',
+        }
+      : CANONICAL_TUTIK_0130_2;
+
+    if (!doc0130_2 || doc0130_2.kepalaKeluargaId !== '0130' || doc0130_2.namaKepalaKeluarga !== 'Agus Subriyanto') {
+      await setDoc(doc(db, MEMBERS_COLLECTION, '0130-2'), cleanForFirestore(tutikFixed));
+      list = [tutikFixed, ...list.filter(m => m.id !== '0130-2')];
+      modified = true;
+      console.log('[DATA_REPAIR] Data istri "Tutik Maryani" (ID: 0130-2) berhasil disinkronkan dengan Kepala Keluarga ID 0130 (Agus Subriyanto).');
+    }
+
+    // 3. Kembalikan data ID 0130 atas nama Agus Subriyanto jika belum ada atau jika 0130 bukan Agus Subriyanto
+    if (!doc0130 || !doc0130.nama.toLowerCase().includes('agus subriyanto')) {
+      // Cek apakah ada arsip Agus Subriyanto di tempdatalama/0130
+      let archivedAgus: Member | null = null;
+      try {
+        const tempSnap = await getDocFromServer(doc(db, TEMP_DATA_LAMA_COLLECTION, '0130'));
+        if (tempSnap.exists()) {
+          const tData = tempSnap.data() as Member;
+          if (tData.nama && tData.nama.toLowerCase().includes('agus')) {
+            archivedAgus = tData;
+          }
+        }
+      } catch {}
+
+      const agusFixed: Member = {
+        ...CANONICAL_AGUS_0130,
+        ...(anyAgus || {}),
+        ...(archivedAgus || {}),
+        id: '0130',
+        nama: 'Agus Subriyanto',
+        peranKeluarga: 'kepala_keluarga',
+        noKk: tutikFixed.noKk || CANONICAL_AGUS_0130.noKk,
+        alamat: tutikFixed.alamat || CANONICAL_AGUS_0130.alamat,
+        kkUrl: (archivedAgus?.kkUrl || anyAgus?.kkUrl || tutikFixed.kkUrl || CANONICAL_AGUS_0130.kkUrl),
+        kkName: (archivedAgus?.kkName || anyAgus?.kkName || tutikFixed.kkName || CANONICAL_AGUS_0130.kkName),
+        status: 'disetujui',
+        regNumber: '1630/YMWM13/II/2026 & L.0130',
+      };
+      delete (agusFixed as any).deletedAt;
+      delete (agusFixed as any).deletedReason;
+      delete (agusFixed as any).kepalaKeluargaId;
+      delete (agusFixed as any).namaKepalaKeluarga;
+
+      // Tulis ulang dokumen 0130 secara penuh (tanpa merge) agar field Sriyono tidak tersisa di 0130
+      await setDoc(doc(db, MEMBERS_COLLECTION, '0130'), cleanForFirestore(agusFixed));
+      list = [agusFixed, ...list.filter(m => m.id !== '0130')];
+      modified = true;
+      console.log('[DATA_REPAIR] Data "Agus Subriyanto" berhasil dikembalikan pada ID 0130.');
+    }
+
+    // 4. Pastikan counter sekuens ID tercatat minimal 131
+    if (modified) {
+      try {
+        await recordAllocatedIdInCounter('0131', 131);
+      } catch {}
+    }
+
+    return modified ? list : null;
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('[DATA_REPAIR] Warning during Agus & Sriyono data check:', error);
+    return null;
+  } finally {
+    isRepairRunning = false;
+  }
+}
+
+/**
+ * Mencatat ID yang sudah pernah dialokasikan ke dalam koleksi system_counters/member_id_seq
+ * agar meskipun data dihapus kemudian, nomor ID tersebut TIDAK PERNAH dipakai ulang.
+ */
+export async function recordAllocatedIdInCounter(allocatedId: string, rootNum?: number): Promise<void> {
+  try {
+    const counterRef = doc(db, SYSTEM_COUNTERS_COLLECTION, 'member_id_seq');
+    let currentLastRoot = 131;
+    let usedIds: string[] = [];
+
+    try {
+      const snap = await getDocFromServer(counterRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (typeof data.lastRootNumber === 'number' && data.lastRootNumber > currentLastRoot) {
+          currentLastRoot = data.lastRootNumber;
+        }
+        if (Array.isArray(data.usedIds)) {
+          usedIds = data.usedIds;
+        }
+      }
+    } catch {}
+
+    const parsedRoot = rootNum ?? parseInt(allocatedId.split('-')[0], 10);
+    const updatedLastRoot = !isNaN(parsedRoot) && parsedRoot > currentLastRoot ? parsedRoot : currentLastRoot;
+    const updatedUsedIds = Array.from(new Set([...usedIds, allocatedId])).slice(-1500);
+
+    await setDoc(
+      counterRef,
+      {
+        lastRootNumber: updatedLastRoot,
+        usedIds: updatedUsedIds,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[ID_COUNTER] Note recording allocated ID:', err);
+  }
+}
+
+/**
+ * Mengalokasikan ID Anggota unik secara ketat dari server Firestore.
+ * Memeriksa koleksi aktif `members`, koleksi data terhapus `tempdatalama`,
+ * dan counter monontonik `system_counters/member_id_seq`.
+ * Menjamin ID yang sudah pernah dibuat (meskipun sudah dihapus) TIDAK AKAN dipakai lagi.
+ */
+export async function allocateUniqueMemberIdFromServer(
+  kepalaKeluargaId?: string,
+  localMembers: Member[] = [],
+  localTempMembers: Member[] = []
+): Promise<string> {
+  const usedIds = new Set<string>();
+  let maxRootNum = 131; // Minimal mulai setelah 0130 (Agus Subriyanto) & 0131 (Sriyono, SH.MM)
+
+  const registerId = (id?: string) => {
+    if (!id) return;
+    const trimmed = id.trim();
+    if (!trimmed) return;
+    usedIds.add(trimmed);
+    const rootPart = trimmed.split('-')[0];
+    const num = parseInt(rootPart, 10);
+    if (!isNaN(num) && num > maxRootNum) {
+      maxRootNum = num;
+    }
+  };
+
+  // 1. Dari data lokal aktif & lokal tempdatalama & INITIAL_MEMBERS
+  INITIAL_MEMBERS.forEach(m => registerId(m.id));
+  localMembers.forEach(m => registerId(m.id));
+  localTempMembers.forEach(m => registerId(m.id));
+
+  // 2. Dari koleksi 'members' live di server Firestore
+  try {
+    const membersSnap = await getDocs(collection(db, MEMBERS_COLLECTION));
+    membersSnap.forEach(d => {
+      registerId(d.id);
+      const data = d.data();
+      if (data?.id) registerId(data.id);
+    });
+  } catch (err) {
+    if (isFirestoreQuotaError(err)) {
+      notifyQuotaLimitExceeded(err instanceof Error ? err.message : String(err));
+      throw new Error(QUOTA_LIMIT_MESSAGE);
+    }
+    console.warn('[ID_ALLOCATOR] Fallback reading members collection:', err);
+  }
+
+  // 3. Dari koleksi 'tempdatalama' (data yang pernah dihapus) di server Firestore
+  try {
+    const tempSnap = await getDocs(collection(db, TEMP_DATA_LAMA_COLLECTION));
+    tempSnap.forEach(d => {
+      registerId(d.id);
+      const data = d.data();
+      if (data?.id) registerId(data.id);
+    });
+  } catch (err) {
+    console.warn('[ID_ALLOCATOR] Note reading tempdatalama collection:', err);
+  }
+
+  // 4. Dari 'system_counters/member_id_seq' (pencatat historis nomor tertinggi yang pernah dibuat)
+  try {
+    const counterSnap = await getDocFromServer(doc(db, SYSTEM_COUNTERS_COLLECTION, 'member_id_seq'));
+    if (counterSnap.exists()) {
+      const cData = counterSnap.data();
+      if (typeof cData.lastRootNumber === 'number' && cData.lastRootNumber > maxRootNum) {
+        maxRootNum = cData.lastRootNumber;
+      }
+      if (Array.isArray(cData.usedIds)) {
+        cData.usedIds.forEach((uid: string) => registerId(uid));
+      }
+    }
+  } catch (err) {
+    console.warn('[ID_ALLOCATOR] Note reading system_counters:', err);
+  }
+
+  // Jika anggota keluarga (Istri / Anak) yang terhubung ke Kepala Keluarga
+  if (kepalaKeluargaId) {
+    let maxSubIndex = 1; // Kepala keluarga dihitung 1, anggota keluarga mulai dari -2 (contoh: 0130-2)
+    usedIds.forEach(existingId => {
+      if (existingId.startsWith(`${kepalaKeluargaId}-`)) {
+        const subPart = existingId.slice(kepalaKeluargaId.length + 1);
+        const subNum = parseInt(subPart, 10);
+        if (!isNaN(subNum) && subNum > maxSubIndex) {
+          maxSubIndex = subNum;
+        }
+      }
+    });
+
+    let nextSub = maxSubIndex + 1;
+    let candidateId = `${kepalaKeluargaId}-${nextSub}`;
+    while (usedIds.has(candidateId)) {
+      nextSub++;
+      candidateId = `${kepalaKeluargaId}-${nextSub}`;
+    }
+
+    // Verifikasi langsung ke dokumen server bahwa candidateId benar-benar kosong di members & tempdatalama
+    for (let check = 0; check < 10; check++) {
+      try {
+        const [mSnap, tSnap] = await Promise.all([
+          getDocFromServer(doc(db, MEMBERS_COLLECTION, candidateId)),
+          getDocFromServer(doc(db, TEMP_DATA_LAMA_COLLECTION, candidateId)),
+        ]);
+        if (!mSnap.exists() && !tSnap.exists()) {
+          break;
+        }
+        nextSub++;
+        candidateId = `${kepalaKeluargaId}-${nextSub}`;
+      } catch {
+        break;
+      }
+    }
+
+    await recordAllocatedIdInCounter(candidateId);
+    return candidateId;
+  }
+
+  // Jika Kepala Keluarga: lanjutkan dari nomor tertinggi + 1 (misal setelah 0131 -> 0132)
+  let nextRoot = maxRootNum + 1;
+  let candidateId = String(nextRoot).padStart(4, '0');
+  while (usedIds.has(candidateId)) {
+    nextRoot++;
+    candidateId = String(nextRoot).padStart(4, '0');
+  }
+
+  // Verifikasi langsung ke dokumen server bahwa candidateId belum pernah dipakai di members maupun tempdatalama
+  for (let check = 0; check < 15; check++) {
+    try {
+      const [mSnap, tSnap] = await Promise.all([
+        getDocFromServer(doc(db, MEMBERS_COLLECTION, candidateId)),
+        getDocFromServer(doc(db, TEMP_DATA_LAMA_COLLECTION, candidateId)),
+      ]);
+      if (!mSnap.exists() && !tSnap.exists()) {
+        break;
+      }
+      nextRoot++;
+      candidateId = String(nextRoot).padStart(4, '0');
+    } catch {
+      break;
+    }
+  }
+
+  await recordAllocatedIdInCounter(candidateId, nextRoot);
+  return candidateId;
+}
+
+// Seed initial members if database is empty, and run live data repair for 0130 & 0131
 export async function seedInitialDataIfEmpty(): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && localStorage.getItem(SEEDED_FLAG_KEY) === 'true') {
-      return;
-    }
     const snap = await getDocs(collection(db, MEMBERS_COLLECTION));
     if (snap.empty) {
       console.log('Seeding initial members to Firestore...');
       for (const m of INITIAL_MEMBERS) {
         await setDoc(doc(db, MEMBERS_COLLECTION, m.id), cleanForFirestore(m));
       }
+      await recordAllocatedIdInCounter('0131', 131);
       console.log('Seeding initial members completed.');
+    } else {
+      const currentList: Member[] = [];
+      snap.forEach(d => currentList.push(d.data() as Member));
+      await repairAgusAndSriyonoDataInFirestore(currentList);
     }
     if (typeof window !== 'undefined') {
       localStorage.setItem(SEEDED_FLAG_KEY, 'true');
@@ -320,7 +699,7 @@ export async function seedInitialDataIfEmpty(): Promise<void> {
     if (isFirestoreQuotaError(error)) {
       notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
     }
-    console.warn('Initial seeding note:', error);
+    console.warn('Initial seeding/repair note:', error);
   }
 }
 
@@ -363,7 +742,6 @@ export interface WriteConfirmationResult {
 
 /**
  * Verifies that a member document actually exists on the Firestore server by polling getDocFromServer.
- * Uses aggressive polling with configurable retry attempts, adaptive interval, and strict content checking.
  */
 export async function verifyMemberExistsInFirestore(
   memberId: string,
@@ -378,12 +756,10 @@ export async function verifyMemberExistsInFirestore(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     onAttempt?.(attempt, maxAttempts);
     try {
-      // Force fetching from server to bypass any local offline cache
       const snap = await getDocFromServer(memberDocRef);
       if (snap.exists()) {
         const data = snap.data();
         if (data && data.id === memberId) {
-          // If expectedData is provided, ensure critical fields match (strict content consistency)
           if (expectedData) {
             const namaMatches = !expectedData.nama || data.nama === expectedData.nama;
             const nikMatches = !expectedData.nik || data.nik === expectedData.nik;
@@ -410,7 +786,6 @@ export async function verifyMemberExistsInFirestore(
     }
 
     if (attempt < maxAttempts) {
-      // Adaptive backoff on polling: 350ms, 400ms, 450ms...
       const currentInterval = intervalMs + (attempt * 40);
       await new Promise(res => setTimeout(res, currentInterval));
     }
@@ -421,14 +796,15 @@ export async function verifyMemberExistsInFirestore(
 }
 
 /**
- * Saves a member to Firestore with aggressive retry logic, exponential backoff with jitter, and server-side verification polling.
- * Guarantees the document is 100% confirmed on the server before resolving.
+ * Saves a member to Firestore with aggressive retry logic, exponential backoff, collision guard, and server-side verification polling.
+ * When `options.preventOverwrite` is true, checks `getDocFromServer` before writing to ensure an existing different member is NEVER overwritten.
  */
 export async function saveMemberWithRetryAndConfirmation(
   member: Member,
   maxRetries: number = 5,
   onStatusUpdate?: (statusText: string) => void,
-  traceId?: string
+  traceId?: string,
+  options?: { preventOverwrite?: boolean }
 ): Promise<WriteConfirmationResult> {
   const path = `${MEMBERS_COLLECTION}/${member.id}`;
   const memberDocRef = doc(db, MEMBERS_COLLECTION, member.id);
@@ -441,7 +817,6 @@ export async function saveMemberWithRetryAndConfirmation(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const attemptStartTime = Date.now();
 
-    // Aggressive exponential backoff with jitter on retries (attempt > 1)
     if (attempt > 1) {
       const baseDelay = 600;
       const exponentialMultiplier = Math.pow(1.5, attempt - 2);
@@ -449,17 +824,29 @@ export async function saveMemberWithRetryAndConfirmation(
       const backoffMs = Math.round(baseDelay * exponentialMultiplier + jitter);
 
       onStatusUpdate?.(`[Penundaan ${backoffMs}ms] Menunggu jeda jaringan sebelum mencoba kembali (Percobaan ${attempt}/${maxRetries})...`);
-      console.log(`[FirestoreTrace:${tid}] Backoff pause ${backoffMs}ms before attempt ${attempt}/${maxRetries}...`);
       await new Promise(res => setTimeout(res, backoffMs));
     }
 
     try {
+      // Proteksi anti-timpa (Collision Guard): Jangan pernah menimpa anggota lain yang sudah punya ID ini!
+      if (options?.preventOverwrite) {
+        const existingSnap = await getDocFromServer(memberDocRef);
+        if (existingSnap.exists()) {
+          const existingData = existingSnap.data() as Member;
+          const isSamePerson =
+            existingData.nik === member.nik &&
+            existingData.nama?.toLowerCase().trim() === member.nama?.toLowerCase().trim();
+          if (!isSamePerson) {
+            throw new Error(`ID_COLLISION_GUARD: ID Anggota ${member.id} sudah digunakan oleh "${existingData.nama}".`);
+          }
+        }
+      }
+
       onStatusUpdate?.(`[Percobaan ${attempt}/${maxRetries}] Mengirim data anggota ke server database Firestore...`);
       console.log(`[FirestoreTrace:${tid}] [Percobaan ${attempt}/${maxRetries}] Writing member ${member.id} ("${member.nama}") to Firestore...`);
       
-      await setDoc(memberDocRef, cleanData, { merge: true });
+      await setDoc(memberDocRef, cleanData);
 
-      // After write, aggressively poll getDocFromServer to strictly confirm data is present on server
       onStatusUpdate?.(`[Percobaan ${attempt}/${maxRetries}] Memverifikasi keberadaan data di server Firestore (polling)...`);
       const isConfirmed = await verifyMemberExistsInFirestore(
         member.id,
@@ -489,7 +876,11 @@ export async function saveMemberWithRetryAndConfirmation(
       const attemptDuration = Date.now() - attemptStartTime;
       console.warn(`[FirestoreTrace:${tid}] Firestore write attempt ${attempt}/${maxRetries} failed (${attemptDuration}ms):`, error?.message || error);
 
-      // Immediately abort retries if Firebase quota limit is exceeded
+      // Immediately propagate collision guard so caller can allocate a fresh ID
+      if (String(error?.message || '').includes('ID_COLLISION_GUARD')) {
+        throw error;
+      }
+
       if (isFirestoreQuotaError(error)) {
         notifyQuotaLimitExceeded(error?.message || String(error));
         throw new Error(QUOTA_LIMIT_MESSAGE);
@@ -497,7 +888,6 @@ export async function saveMemberWithRetryAndConfirmation(
     }
   }
 
-  // If write or verification failed after all retries, throw detailed Firestore error
   handleFirestoreError(
     lastError || new Error(`Data anggota "${member.nama}" (ID: ${member.id}, Trace: ${tid}) belum dapat dikonfirmasi di server Firestore setelah ${maxRetries} kali percobaan write & polling.`),
     OperationType.WRITE,
@@ -513,6 +903,78 @@ export async function deleteMemberFromFirestore(id: string): Promise<void> {
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+}
+
+// ============================================================================
+// KOLEKSI TEMPORARY DATA TERHAPUS: 'tempdatalama'
+// Menampung data anggota yang terhapus agar dapat dipulihkan kembali ke 'members'
+// ============================================================================
+
+export async function saveToTempDataLamaFirestore(member: Member): Promise<void> {
+  const path = `${TEMP_DATA_LAMA_COLLECTION}/${member.id}`;
+  try {
+    const payload: Member = {
+      ...member,
+      deletedAt: member.deletedAt || new Date().toISOString(),
+    };
+    await setDoc(doc(db, TEMP_DATA_LAMA_COLLECTION, member.id), cleanForFirestore(payload));
+    // Pastikan ID anggota yang dihapus tetap tercatat di counter agar ID-nya tidak dipakai ulang
+    await recordAllocatedIdInCounter(member.id);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteFromTempDataLamaFirestore(memberId: string): Promise<void> {
+  const path = `${TEMP_DATA_LAMA_COLLECTION}/${memberId}`;
+  try {
+    await deleteDoc(doc(db, TEMP_DATA_LAMA_COLLECTION, memberId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function fetchTempDataLamaFromFirestore(): Promise<Member[]> {
+  try {
+    const snap = await getDocs(collection(db, TEMP_DATA_LAMA_COLLECTION));
+    const list: Member[] = [];
+    snap.forEach(d => list.push(d.data() as Member));
+    return list;
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('Error fetching tempdatalama:', error);
+    return [];
+  }
+}
+
+export function subscribeTempDataLamaFirestore(
+  onUpdate: (deletedMembers: Member[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const path = TEMP_DATA_LAMA_COLLECTION;
+  const colRef = collection(db, path);
+
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: Member[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as Member);
+      });
+      list.sort((a, b) => new Date(b.deletedAt || b.tanggalDaftar).getTime() - new Date(a.deletedAt || a.tanggalDaftar).getTime());
+      onUpdate(list);
+    },
+    (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
+      onError?.(error);
+    }
+  );
 }
 
 // Real-time listener for Members
@@ -575,7 +1037,6 @@ export function subscribeNotificationsFirestore(
         onError?.(new Error(QUOTA_LIMIT_MESSAGE));
         return;
       }
-      // Fallback query without orderBy in case index is pending
       const fallbackCol = collection(db, path);
       return onSnapshot(
         fallbackCol,
@@ -603,11 +1064,18 @@ export function subscribeNotificationsFirestore(
   );
 }
 
-// Add a Notification to Firestore
+// Add a Notification to Firestore and verify it exists on the server
 export async function addNotificationToFirestore(notif: AppNotification): Promise<void> {
   const path = `${NOTIFICATIONS_COLLECTION}/${notif.id}`;
+  const notifDocRef = doc(db, NOTIFICATIONS_COLLECTION, notif.id);
   try {
-    await setDoc(doc(db, NOTIFICATIONS_COLLECTION, notif.id), cleanForFirestore(notif));
+    await setDoc(notifDocRef, cleanForFirestore(notif));
+    // Verify the notification document is readable on the server
+    try {
+      await getDocFromServer(notifDocRef);
+    } catch (verifyErr) {
+      console.warn('Notification verification read warning:', verifyErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

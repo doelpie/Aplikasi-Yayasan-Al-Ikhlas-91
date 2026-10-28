@@ -3,16 +3,18 @@ import { Member, AppNotification, BroadcastMessage, Activity, ActivityAttendee }
 import { 
   getStoredMembers, 
   saveMembers, 
+  getStoredTempDataLama,
+  saveTempDataLama,
+  ensureAgusAndSriyonoInMemberList,
+  restoreMemberFromTempDataLamaAsync,
   getStoredNotifications, 
   saveNotifications,
   markAllNotificationsAsRead, 
   subscribeToRealtimeEvents, 
-  updateMemberStatus, 
-  addNewMember, 
+  updateMemberStatusAsync,
   addNewMemberAsync,
-  updateMember, 
   updateMemberAsync,
-  deleteMember, 
+  deleteMemberAsync, 
   resetToInitialData,
   requestNotificationPermission,
   getCurrentUserSession,
@@ -21,7 +23,8 @@ import {
   addNewActivity,
   updateActivity,
   deleteActivity,
-  recordAttendance
+  recordAttendance,
+  loadMembersFromIndexedDB
 } from './utils/storage';
 import { soundEffects } from './utils/sound';
 import { Header } from './components/Header';
@@ -38,8 +41,10 @@ import { DocumentViewerModal } from './components/DocumentViewerModal';
 import { NotificationToast } from './components/NotificationToast';
 import { 
   subscribeMembersFirestore, 
+  subscribeTempDataLamaFirestore,
   subscribeNotificationsFirestore, 
   seedInitialDataIfEmpty,
+  repairAgusAndSriyonoDataInFirestore,
   subscribeToQuotaLimitErrors,
   isFirestoreQuotaError,
   QUOTA_LIMIT_MESSAGE
@@ -60,6 +65,7 @@ export default function App() {
 
   // Data State
   const [members, setMembers] = useState<Member[]>(() => getStoredMembers());
+  const [tempDataLama, setTempDataLama] = useState<Member[]>(() => getStoredTempDataLama());
   const [activities, setActivities] = useState<Activity[]>(() => getStoredActivities());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotifications());
 
@@ -81,6 +87,7 @@ export default function App() {
     if (msg.type === 'STATUS_CHANGED' || msg.type === 'NEW_REGISTRATION' || msg.type === 'DATA_SYNC') {
       const refreshedMembers = getStoredMembers();
       setMembers(refreshedMembers);
+      setTempDataLama(getStoredTempDataLama());
 
       // Refresh current session if matches
       const activeUser = sessionRef.current;
@@ -128,23 +135,51 @@ export default function App() {
       setCurrentToast(quotaNotif);
     });
 
-    // 1. Initial seed check for Firebase Firestore
+    // 1. Initial seed check for Firebase Firestore & IndexedDB hydration
     seedInitialDataIfEmpty().catch(err => console.warn('Firestore seed note:', err));
+    loadMembersFromIndexedDB().then((idbMembers) => {
+      if (idbMembers && idbMembers.length > 0) {
+        setMembers((prev) => {
+          // If Firestore hasn't provided members yet or current items have missing photos
+          if (!prev || prev.length === 0) return idbMembers;
+          return prev.map(m => {
+            const match = idbMembers.find(im => im.id === m.id);
+            return match ? { ...match, ...m, fotoUrl: m.fotoUrl || match.fotoUrl, ktpUrl: m.ktpUrl || match.ktpUrl, kkUrl: m.kkUrl || match.kkUrl } : m;
+          });
+        });
+      }
+    }).catch(() => {});
 
-    // 2. Real-time subscription to Firebase Firestore Members
+    // 2. Real-time subscription to Firebase Firestore Members (with automatic repair for 0130 Agus Subriyanto & 0131 Sriyono, SH.MM)
     const unsubMembers = subscribeMembersFirestore((remoteMembers) => {
       if (remoteMembers && remoteMembers.length > 0) {
-        setMembers(remoteMembers);
-        saveMembers(remoteMembers);
+        const { members: verifiedList, changed } = ensureAgusAndSriyonoInMemberList(remoteMembers);
+        setMembers(verifiedList);
+        saveMembers(verifiedList);
+
+        // If live Firestore had 0130 overwritten by Sriyono or missing Agus Subriyanto, heal it in Firestore
+        if (changed) {
+          repairAgusAndSriyonoDataInFirestore(remoteMembers).catch(err =>
+            console.warn('Firestore repair note:', err)
+          );
+        }
 
         const activeUser = sessionRef.current;
         if (activeUser) {
-          const freshUser = remoteMembers.find(m => m.id === activeUser.id);
+          const freshUser = verifiedList.find(m => m.id === activeUser.id);
           if (freshUser) {
             setSessionMember(freshUser);
             setCurrentUserSession(freshUser);
           }
         }
+      }
+    });
+
+    // 2b. Real-time subscription to Firebase Firestore 'tempdatalama' (Archived Deleted Members)
+    const unsubTempDataLama = subscribeTempDataLamaFirestore((remoteDeleted) => {
+      if (remoteDeleted) {
+        setTempDataLama(remoteDeleted);
+        saveTempDataLama(remoteDeleted);
       }
     });
 
@@ -163,6 +198,7 @@ export default function App() {
       if (e.key?.includes('yayasan_alikhlas')) {
         const refreshed = getStoredMembers();
         setMembers(refreshed);
+        setTempDataLama(getStoredTempDataLama());
         setNotifications(getStoredNotifications());
         setActivities(getStoredActivities());
         const freshUser = getCurrentUserSession();
@@ -174,6 +210,7 @@ export default function App() {
     return () => {
       unsubQuota();
       unsubMembers();
+      unsubTempDataLama();
       unsubNotifs();
       unsubscribeBroadcast();
       window.removeEventListener('storage', onStorageChange);
@@ -276,26 +313,36 @@ export default function App() {
     }
   };
 
-  // Handlers for Admin - Member Management
-  const handleApprove = (memberId: string) => {
-    const { updatedMember, notification } = updateMemberStatus(memberId, 'disetujui');
-    if (updatedMember) {
-      setMembers(getStoredMembers());
-      setNotifications(getStoredNotifications());
-      if (notification) {
-        setCurrentToast(notification);
+  // Handlers for Admin - Member Management (Verified Firestore members -> Daftar Anggota -> Firestore notifications -> Toast)
+  const handleApprove = async (memberId: string) => {
+    try {
+      const { updatedMember, notification } = await updateMemberStatusAsync(memberId, 'disetujui');
+      if (updatedMember) {
+        setMembers(getStoredMembers());
+        setNotifications(getStoredNotifications());
+        if (notification) {
+          setCurrentToast(notification);
+        }
       }
+    } catch (err: any) {
+      const msg = isFirestoreQuotaError(err) ? QUOTA_LIMIT_MESSAGE : (err?.message || 'Gagal menyetujui anggota di database.');
+      setQuotaErrorBanner(msg);
     }
   };
 
-  const handleReject = (memberId: string, reason?: string) => {
-    const { updatedMember, notification } = updateMemberStatus(memberId, 'ditolak', reason);
-    if (updatedMember) {
-      setMembers(getStoredMembers());
-      setNotifications(getStoredNotifications());
-      if (notification) {
-        setCurrentToast(notification);
+  const handleReject = async (memberId: string, reason?: string) => {
+    try {
+      const { updatedMember, notification } = await updateMemberStatusAsync(memberId, 'ditolak', reason);
+      if (updatedMember) {
+        setMembers(getStoredMembers());
+        setNotifications(getStoredNotifications());
+        if (notification) {
+          setCurrentToast(notification);
+        }
       }
+    } catch (err: any) {
+      const msg = isFirestoreQuotaError(err) ? QUOTA_LIMIT_MESSAGE : (err?.message || 'Gagal memperbarui status anggota di database.');
+      setQuotaErrorBanner(msg);
     }
   };
 
@@ -324,14 +371,36 @@ export default function App() {
     }
   };
 
-  const handleDeleteMember = (memberId: string) => {
+  const handleDeleteMember = async (memberId: string) => {
     const toDelete = members.find(m => m.id === memberId);
-    if (window.confirm(`Apakah Anda yakin ingin menghapus data anggota "${toDelete?.nama || memberId}"?`)) {
-      deleteMember(memberId);
+    if (window.confirm(`Apakah Anda yakin ingin menghapus data anggota "${toDelete?.nama || memberId}"? Data akan disimpan ke tabel sementara (tempdatalama) agar dapat dipulihkan kembali.`)) {
+      await deleteMemberAsync(memberId);
       setMembers(getStoredMembers());
+      setTempDataLama(getStoredTempDataLama());
       if (currentUserSession?.id === memberId) {
         handleLogoutSession();
       }
+    }
+  };
+
+  const handleRestoreFromTempDataLama = async (deletedMember: Member) => {
+    try {
+      const restored = await restoreMemberFromTempDataLamaAsync(deletedMember);
+      setMembers(getStoredMembers());
+      setTempDataLama(getStoredTempDataLama());
+      setNotifications(getStoredNotifications());
+      setCurrentToast({
+        id: 'restore_ok_' + Date.now(),
+        memberId: restored.id,
+        memberName: restored.nama,
+        type: 'status_approved',
+        message: `Data anggota "${restored.nama}" (ID: ${restored.id}) berhasil dikembalikan dari tempdatalama ke daftar anggota.`,
+        timestamp: new Date().toISOString(),
+        read: false,
+      });
+    } catch (err: any) {
+      const msg = isFirestoreQuotaError(err) ? QUOTA_LIMIT_MESSAGE : (err?.message || 'Gagal mengembalikan data dari tempdatalama.');
+      setQuotaErrorBanner(msg);
     }
   };
 
@@ -423,6 +492,7 @@ export default function App() {
         isAdminLoggedIn ? (
           <AdminDashboard
             members={members}
+            tempDataLama={tempDataLama}
             activities={activities}
             notifications={notifications}
             onApprove={handleApprove}
@@ -430,6 +500,7 @@ export default function App() {
             onAddMember={() => setIsAddingAdmin(true)}
             onEditMember={(m) => setEditingMember(m)}
             onDeleteMember={handleDeleteMember}
+            onRestoreFromTempDataLama={handleRestoreFromTempDataLama}
             onViewCard={(m) => setCardModalMember(m)}
             onViewDoc={(title, url, fileName) => setViewingDoc({ title, url, fileName })}
             onLogout={() => {
@@ -480,6 +551,20 @@ export default function App() {
                 currentUserSession={currentUserSession}
                 onSubmit={handlePublicRegister}
                 onSuccessRedirect={() => setActiveTab(currentUserSession ? 'profil' : 'anggota')}
+                onRestoreSuccess={(restored) => {
+                  setMembers(getStoredMembers());
+                  setTempDataLama(getStoredTempDataLama());
+                  setNotifications(getStoredNotifications());
+                  setCurrentToast({
+                    id: 'restore_reg_' + Date.now(),
+                    memberId: restored.id,
+                    memberName: restored.nama,
+                    type: 'status_approved',
+                    message: `Data anggota "${restored.nama}" (ID: ${restored.id}) berhasil dikembalikan kembali dari arsip tempdatalama!`,
+                    timestamp: new Date().toISOString(),
+                    read: false,
+                  });
+                }}
               />
             )}
 
@@ -615,6 +700,20 @@ export default function App() {
             setEditingMember(null);
           }}
           onSave={handleSaveAdminMember}
+          onRestoreSuccess={(restored) => {
+            setMembers(getStoredMembers());
+            setTempDataLama(getStoredTempDataLama());
+            setNotifications(getStoredNotifications());
+            setCurrentToast({
+              id: 'restore_admin_' + Date.now(),
+              memberId: restored.id,
+              memberName: restored.nama,
+              type: 'status_approved',
+              message: `Data anggota "${restored.nama}" (ID: ${restored.id}) berhasil dikembalikan dari tempdatalama ke tabel members.`,
+              timestamp: new Date().toISOString(),
+              read: false,
+            });
+          }}
         />
       )}
 

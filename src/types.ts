@@ -35,6 +35,8 @@ export interface Member {
   catatanPenolakan?: string;
   tanggalDaftar: string; // ISO date string
   tanggalDisetujui?: string; // ISO date string
+  deletedAt?: string; // ISO date string when moved to tempdatalama
+  deletedReason?: string;
 }
 
 export interface AppNotification {

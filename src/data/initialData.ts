@@ -201,5 +201,61 @@ export const INITIAL_MEMBERS: Member[] = [
     fotoUrl: SYARI_PHOTOS.kepalaKeluargaSoni,
     status: 'menunggu',
     tanggalDaftar: '2026-10-19T07:15:00.000Z',
+  },
+
+  // ================= KELUARGA AGUS SUBRIYANTO (ID: 0130) & TUTIK MARYANI (ID: 0130-2) =================
+  {
+    id: '0130',
+    regNumber: '1630/YMWM13/II/2026 & L.0130',
+    nik: '5103051806770130', // 6 digit terakhir PIN: 770130
+    nama: 'Agus Subriyanto',
+    noKk: '5103051908060130',
+    peranKeluarga: 'kepala_keluarga',
+    tempatTanggalLahir: 'Banyuwangi, 18 Juni 1977',
+    alamat: 'Perum Dalung Permai Lingkungan Banjar Tegal Jaya, Desa Dalung, Kuta Utara, Badung',
+    jumlahKeluarga: 2,
+    noHp: '081236780130',
+    email: 'agus.subriyanto@gmail.com',
+    fotoUrl: SYARI_PHOTOS.kepalaKeluargaMargo,
+    status: 'disetujui',
+    tanggalDaftar: '2026-10-24T08:00:00.000Z',
+    tanggalDisetujui: '2026-10-25T09:00:00.000Z',
+  },
+  {
+    id: '0130-2',
+    regNumber: '1630/YMWM13/II/2026 & L.0130-B',
+    nik: '5103055209800130', // 6 digit terakhir PIN: 800130
+    nama: 'Tutik Maryani',
+    noKk: '5103051908060130',
+    peranKeluarga: 'istri',
+    kepalaKeluargaId: '0130',
+    namaKepalaKeluarga: 'Agus Subriyanto',
+    tempatTanggalLahir: 'Jember, 12 September 1980',
+    alamat: 'Perum Dalung Permai Lingkungan Banjar Tegal Jaya, Desa Dalung, Kuta Utara, Badung',
+    noHp: '081236780132',
+    email: 'tutik.maryani@gmail.com',
+    fotoUrl: SYARI_PHOTOS.istriSitiAminah,
+    status: 'disetujui',
+    tanggalDaftar: '2026-10-24T08:15:00.000Z',
+    tanggalDisetujui: '2026-10-25T09:05:00.000Z',
+  },
+
+  // ================= KELUARGA SRIYONO, SH.MM (ID: 0131) =================
+  {
+    id: '0131',
+    regNumber: '1631/YMWM13/II/2026 & L.0131',
+    nik: '5103051003750131', // 6 digit terakhir PIN: 750131
+    nama: 'Sriyono, SH.MM',
+    noKk: '5103052204040131',
+    peranKeluarga: 'kepala_keluarga',
+    tempatTanggalLahir: 'Surakarta, 10 Maret 1975',
+    alamat: 'Perumahan Bumi Dalung Permai, Desa Dalung, Kuta Utara, Badung',
+    jumlahKeluarga: 1,
+    noHp: '081239880131',
+    email: 'sriyono.shmm@gmail.com',
+    fotoUrl: SYARI_PHOTOS.kepalaKeluargaJajat,
+    status: 'disetujui',
+    tanggalDaftar: '2026-10-26T09:00:00.000Z',
+    tanggalDisetujui: '2026-10-26T10:30:00.000Z',
   }
 ];

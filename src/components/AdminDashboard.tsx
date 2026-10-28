@@ -23,6 +23,8 @@ import {
   ShieldCheck,
   Zap,
   RefreshCw,
+  RotateCcw,
+  Archive,
   X
 } from 'lucide-react';
 import { 
@@ -41,13 +43,15 @@ import { exportMembersToExcelWithImages, generateDocumentPreviewDataUrl } from '
 
 interface AdminDashboardProps {
   members: Member[];
+  tempDataLama?: Member[];
   activities: Activity[];
   notifications: AppNotification[];
-  onApprove: (memberId: string) => void;
-  onReject: (memberId: string, reason?: string) => void;
+  onApprove: (memberId: string) => Promise<void> | void;
+  onReject: (memberId: string, reason?: string) => Promise<void> | void;
   onAddMember: () => void;
   onEditMember: (member: Member) => void;
   onDeleteMember: (memberId: string) => void;
+  onRestoreFromTempDataLama?: (deletedMember: Member) => Promise<void> | void;
   onViewCard: (member: Member) => void;
   onViewDoc: (title: string, url?: string, fileName?: string) => void;
   onLogout: () => void;
@@ -67,6 +71,7 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   members,
+  tempDataLama = [],
   activities,
   notifications,
   onApprove,
@@ -74,6 +79,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onAddMember,
   onEditMember,
   onDeleteMember,
+  onRestoreFromTempDataLama,
   onViewCard,
   onViewDoc,
   onLogout,
@@ -103,6 +109,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Excel Export with embedded images state
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [exportProgressText, setExportProgressText] = useState<string | null>(null);
+  const [processingMemberId, setProcessingMemberId] = useState<string | null>(null);
+  const [isTempDataLamaOpen, setIsTempDataLamaOpen] = useState(false);
+  const [restoringTempId, setRestoringTempId] = useState<string | null>(null);
 
   // Statistics for Anggota
   const countApproved = useMemo(() => members.filter(m => m.status === 'disetujui').length, [members]);
@@ -315,6 +324,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   <History className="w-3.5 h-3.5 text-indigo-600" />
                   <span>Log Jejak</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsTempDataLamaOpen(true)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                  title="Lihat & Pulihkan Data Anggota Terhapus pada Tabel tempdatalama"
+                >
+                  <Archive className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Data Terhapus ({tempDataLama.length})</span>
                 </button>
 
                 <button
@@ -614,22 +633,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             <div className="flex items-center gap-1.5">
                               {member.status !== 'disetujui' && (
                                 <button
-                                  onClick={() => onApprove(member.id)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs"
+                                  disabled={processingMemberId === member.id}
+                                  onClick={async () => {
+                                    setProcessingMemberId(member.id);
+                                    try {
+                                      await onApprove(member.id);
+                                    } finally {
+                                      setProcessingMemberId(null);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0b5d34] hover:bg-[#084d2a] disabled:opacity-60 text-white text-xs font-bold rounded-xl cursor-pointer shadow-2xs"
                                   title="Setujui dan aktifkan kartu anggota"
                                 >
                                   <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>Setujui</span>
+                                  <span>{processingMemberId === member.id ? 'Menyimpan...' : 'Setujui'}</span>
                                 </button>
                               )}
 
                               {member.status !== 'ditolak' && (
                                 <button
+                                  disabled={processingMemberId === member.id}
                                   onClick={() => {
                                     setRejectingMember(member);
                                     setRejectReason('');
                                   }}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl cursor-pointer"
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-60 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl cursor-pointer"
                                   title="Tolak pendaftaran dengan catatan"
                                 >
                                   <XCircle className="w-3.5 h-3.5" />
@@ -1007,6 +1035,106 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 type="button"
                 onClick={() => setIsTraceModalOpen(false)}
                 className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-xl text-xs cursor-pointer shadow-xs"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Arsip Data Terhapus ('tempdatalama') */}
+      {isTempDataLamaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col border border-gray-100 overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-gray-100 bg-[#f8faf9] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                  <Archive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900 leading-tight">
+                    Arsip Data Terhapus (Tabel <code className="text-[#0b5d34]">tempdatalama</code>)
+                  </h3>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Menampung data anggota yang pernah dihapus agar dapat dimuat &amp; dikembalikan ke tabel <code className="text-[#0b5d34]">members</code>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTempDataLamaOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3">
+              {tempDataLama.length === 0 ? (
+                <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                  <Archive className="w-8 h-8 text-gray-400 mx-auto" />
+                  <div className="text-xs font-semibold text-gray-700">Tabel tempdatalama Kosong</div>
+                  <p className="text-[11px] text-gray-500 max-w-sm mx-auto leading-relaxed">
+                    Saat ini tidak ada data anggota yang terhapus. Setiap anggota yang dihapus tidak akan hilang permanen, melainkan disimpan di tabel sementara <strong>tempdatalama</strong> dan nomor ID-nya tetap terjaga unik.
+                  </p>
+                </div>
+              ) : (
+                tempDataLama.map((item) => (
+                  <div
+                    key={item.id + '_' + item.nik}
+                    className="p-3.5 sm:p-4 rounded-2xl border border-amber-200 bg-amber-50/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-1 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-[#0b5d34] font-bold text-[10px] uppercase">
+                          {getPeranLabel(item.peranKeluarga)}
+                        </span>
+                        <span className="font-mono font-bold text-gray-700">ID: {item.id}</span>
+                        {item.deletedAt && (
+                          <span className="text-[10px] text-gray-500">
+                            Dihapus: {new Date(item.deletedAt).toLocaleString('id-ID')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="font-bold text-sm text-gray-900">{item.nama}</div>
+                      <div className="text-[11px] font-mono text-gray-600">
+                        NIK: <strong>{item.nik}</strong> &bull; No. KK: <strong>{item.noKk}</strong>
+                      </div>
+                      <div className="text-[11px] text-gray-600">{item.alamat}</div>
+                    </div>
+
+                    {onRestoreFromTempDataLama && (
+                      <button
+                        type="button"
+                        disabled={restoringTempId === item.id}
+                        onClick={async () => {
+                          setRestoringTempId(item.id);
+                          try {
+                            await onRestoreFromTempDataLama(item);
+                          } finally {
+                            setRestoringTempId(null);
+                          }
+                        }}
+                        className="px-3.5 py-2 bg-[#0b5d34] hover:bg-[#084d2a] disabled:opacity-60 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer inline-flex items-center gap-1.5 shrink-0"
+                      >
+                        <RotateCcw className={`w-3.5 h-3.5 ${restoringTempId === item.id ? 'animate-spin' : ''}`} />
+                        <span>{restoringTempId === item.id ? 'Memulihkan...' : 'Kembalikan ke Members'}</span>
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-3 sm:p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-[11px] text-gray-600">
+                Total data di <code className="font-bold text-[#0b5d34]">tempdatalama</code>: {tempDataLama.length} anggota
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsTempDataLamaOpen(false)}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-xl text-xs cursor-pointer"
               >
                 Tutup
               </button>

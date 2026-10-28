@@ -118,9 +118,36 @@
           "type": "string",
           "description": "Tanggal disetujui format ISO",
           "maxLength": 100
+        },
+        "deletedAt": {
+          "type": "string",
+          "description": "Waktu data dihapus dan dipindahkan ke tempdatalama format ISO",
+          "maxLength": 100
         }
       },
       "required": ["id", "nik", "nama", "alamat", "noHp", "noKk", "peranKeluarga", "status", "tanggalDaftar"]
+    },
+    "SystemCounter": {
+      "title": "SystemCounter",
+      "description": "Pelacak nomor urut ID anggota unik agar ID tidak pernah digunakan ulang",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID counter",
+          "maxLength": 64
+        },
+        "lastNumber": {
+          "type": "number",
+          "description": "Nomor urut ID tertinggi terakhir yang pernah dialokasikan"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Waktu pembaruan terakhir format ISO",
+          "maxLength": 100
+        }
+      },
+      "required": ["id", "lastNumber", "updatedAt"]
     },
     "Notification": {
       "title": "Notification",
@@ -226,7 +253,15 @@
   "firestore": {
     "/members/{memberId}": {
       "schema": "Member",
-      "description": "Koleksi data anggota Yayasan Al Ikhlas Sembilan Satu"
+      "description": "Koleksi data anggota aktif Yayasan Al Ikhlas Sembilan Satu"
+    },
+    "/tempdatalama/{memberId}": {
+      "schema": "Member",
+      "description": "Koleksi sementara penampung data anggota yang terhapus agar dapat dipulihkan kembali"
+    },
+    "/system_counters/{counterId}": {
+      "schema": "SystemCounter",
+      "description": "Koleksi pelacak nomor urut ID anggota unik"
     },
     "/notifications/{notificationId}": {
       "schema": "Notification",

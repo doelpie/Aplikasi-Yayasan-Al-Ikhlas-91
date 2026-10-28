@@ -47,13 +47,33 @@ service cloud.firestore {
       allow read: if true;
     }
 
-    // Koleksi Anggota Yayasan
+    match /connection_check/ping {
+      allow read: if true;
+    }
+
+    // Koleksi Anggota Yayasan Aktif
     match /members/{memberId} {
       allow get: if isValidId(memberId);
       allow list: if true;
       allow create: if isValidId(memberId) && isValidMember(incoming());
       allow update: if isValidId(memberId) && isValidMember(incoming());
       allow delete: if isValidId(memberId);
+    }
+
+    // Koleksi Sementara Data Anggota Terhapus (tempdatalama) untuk Pemulihan Data
+    match /tempdatalama/{memberId} {
+      allow get: if isValidId(memberId);
+      allow list: if true;
+      allow create: if isValidId(memberId) && isValidMember(incoming());
+      allow update: if isValidId(memberId) && isValidMember(incoming());
+      allow delete: if isValidId(memberId);
+    }
+
+    // Koleksi Pelacak Nomor Urut ID Unik (system_counters)
+    match /system_counters/{counterId} {
+      allow get: if isValidId(counterId);
+      allow list: if true;
+      allow create, update: if isValidId(counterId);
     }
 
     // Koleksi Notifikasi Real-time

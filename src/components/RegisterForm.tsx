@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Member, FamilyRole } from '../types';
-import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users, ShieldCheck, Check, Upload, Image, FileText, Trash2 } from 'lucide-react';
+import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users, ShieldCheck, Check, Upload, Image, FileText, Trash2, RotateCcw } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getAvailableKepalaKeluarga, getPeranLabel } from '../utils/storage';
+import { getAvailableKepalaKeluarga, getPeranLabel, checkNikAvailability, restoreMemberFromTempDataLamaAsync } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
 import { compressImage } from '../utils/imageCompressor';
 
@@ -19,6 +19,7 @@ interface RegisterFormProps {
     onStatusUpdate?: (status: string) => void
   ) => Promise<Member> | Member;
   onSuccessRedirect: () => void;
+  onRestoreSuccess?: (restoredMember: Member) => void;
 }
 
 export const RegisterForm: React.FC<RegisterFormProps> = ({
@@ -26,6 +27,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   currentUserSession,
   onSubmit,
   onSuccessRedirect,
+  onRestoreSuccess,
 }) => {
   // If logged in as Kepala Keluarga, default role can be Istri or Anak
   const isHeadOfFamilyLoggedIn = currentUserSession?.peranKeluarga === 'kepala_keluarga';
@@ -57,6 +59,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [submittedMember, setSubmittedMember] = useState<Member | null>(null);
+  const [deletedMatchMember, setDeletedMatchMember] = useState<Member | null>(null);
+  const [isRestoringDeleted, setIsRestoringDeleted] = useState(false);
 
   // Available Kepala Keluarga in the system
   const availableHeads = getAvailableKepalaKeluarga(allMembers);
@@ -298,9 +302,29 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     }
 
     setIsSubmitting(true);
-    setStatusText('Mengompresi dan mengoptimalkan dokumen...');
+    setStatusText('Memeriksa keunikan Nomor KTP (NIK) pada database...');
 
     try {
+      // Cek apakah Nomor KTP (NIK) sudah pernah terdaftar di members atau di tempdatalama
+      const nikCheck = await checkNikAvailability(cleanNik);
+      if (nikCheck.status === 'exists_in_members' && nikCheck.member) {
+        setError(
+          `Nomor KTP/NIK ${cleanNik} sudah terdaftar aktif atas nama "${nikCheck.member.nama}" (ID Anggota: ${nikCheck.member.id}). Nomor KTP harus unik dan tidak dapat didaftarkan ganda.`
+        );
+        setIsSubmitting(false);
+        setStatusText(null);
+        return;
+      }
+
+      if (nikCheck.status === 'exists_in_tempdatalama' && nikCheck.member) {
+        setDeletedMatchMember(nikCheck.member);
+        setIsSubmitting(false);
+        setStatusText(null);
+        return;
+      }
+
+      setStatusText('Mengompresi dan mengoptimalkan dokumen...');
+
       // Ensure photos are compressed before submission
       const finalFoto = await compressImage(fotoData.url, { maxDimension: 600, quality: 0.72 });
       const finalKtp = await compressImage(ktpData.url, { maxDimension: 800, quality: 0.75 });
@@ -347,6 +371,54 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     } finally {
       setIsSubmitting(false);
       setStatusText(null);
+    }
+  };
+
+  // Handler untuk mengembalikan data dari koleksi tempdatalama
+  const handleConfirmRestoreFromTempDataLama = async () => {
+    if (!deletedMatchMember) return;
+    setIsRestoringDeleted(true);
+    setError(null);
+    try {
+      const restored = await restoreMemberFromTempDataLamaAsync(
+        deletedMatchMember,
+        {
+          nama: nama.trim() || deletedMatchMember.nama,
+          noHp: noHp.trim() || deletedMatchMember.noHp,
+          email: email.trim() || deletedMatchMember.email,
+          alamat: alamat.trim() || deletedMatchMember.alamat,
+        },
+        (msg) => setStatusText(msg)
+      );
+      setDeletedMatchMember(null);
+      onRestoreSuccess?.(restored);
+      setSubmittedMember(restored);
+      try {
+        confetti({ particleCount: 90, spread: 70, origin: { y: 0.5 } });
+      } catch {}
+    } catch (err: any) {
+      setError(err?.message || 'Gagal mengembalikan data dari arsip tempdatalama.');
+    } finally {
+      setIsRestoringDeleted(false);
+      setStatusText(null);
+    }
+  };
+
+  // Cek otomatis saat pengguna selesai mengetik 16 digit NIK
+  const handleNikChangeAndCheck = async (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 16);
+    setNik(clean);
+    if (clean.length === 16) {
+      const check = await checkNikAvailability(clean);
+      if (check.status === 'exists_in_tempdatalama' && check.member) {
+        setDeletedMatchMember(check.member);
+      } else if (check.status === 'exists_in_members' && check.member) {
+        setError(
+          `Nomor KTP/NIK ${clean} sudah terdaftar aktif atas nama "${check.member.nama}" (ID Anggota: ${check.member.id}). Nomor KTP tidak dapat digunakan ganda.`
+        );
+      } else {
+        setError(null);
+      }
     }
   };
 
@@ -566,7 +638,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
               required
               maxLength={16}
               value={nik}
-              onChange={(e) => setNik(e.target.value.replace(/\D/g, '').slice(0, 16))}
+              onChange={(e) => handleNikChangeAndCheck(e.target.value)}
               placeholder={`Masukkan 16 digit nomor ${peranKeluarga === 'anak' ? 'KTP atau KIA' : 'KTP'}`}
               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono text-gray-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0b5d34]/20 focus:border-[#0b5d34] transition-all"
             />
@@ -1013,6 +1085,76 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Modal Konfirmasi Kembalikan Data Terhapus dari Koleksi 'tempdatalama' */}
+      {deletedMatchMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border-t-4 border-[#0b5d34] space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900 leading-snug">
+                  Data KTP Pernah Terdaftar (Arsip Terhapus)
+                </h3>
+                <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                  Nomor KTP <strong>{deletedMatchMember.nik}</strong> pernah sudah terdaftar atas nama{' '}
+                  <strong className="text-[#0b5d34]">"{deletedMatchMember.nama}"</strong> (ID Anggota:{' '}
+                  <strong>{deletedMatchMember.id}</strong>) yang sebelumnya telah terhapus.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-2xl text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Nama Terdaftar:</span>
+                <span className="font-bold text-gray-900">{deletedMatchMember.nama}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">ID Anggota Asli:</span>
+                <span className="font-mono font-bold text-[#0b5d34]">{deletedMatchMember.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Nomor KTP / NIK:</span>
+                <span className="font-mono font-semibold text-gray-800">{deletedMatchMember.nik}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Nomor KK:</span>
+                <span className="font-mono text-gray-800">{deletedMatchMember.noKk}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Peran Keluarga:</span>
+                <span className="font-semibold text-emerald-800">{getPeranLabel(deletedMatchMember.peranKeluarga)}</span>
+              </div>
+            </div>
+
+            <p className="text-xs font-semibold text-gray-800 text-center">
+              Apakah Anda ingin mengembalikan kembali data yang sudah terhapus tersebut dari tabel <code className="px-1.5 py-0.5 bg-gray-100 rounded text-[#0b5d34]">tempdatalama</code> ke daftar anggota aktif?
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isRestoringDeleted}
+                onClick={handleConfirmRestoreFromTempDataLama}
+                className="flex-1 py-3 px-4 bg-[#0b5d34] hover:bg-[#084d2a] text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <RotateCcw className={`w-4 h-4 ${isRestoringDeleted ? 'animate-spin' : ''}`} />
+                <span>{isRestoringDeleted ? 'Mengembalikan Data...' : 'Ya, Kembalikan Data Terhapus'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isRestoringDeleted}
+                onClick={() => setDeletedMatchMember(null)}
+                className="py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
