@@ -248,6 +248,49 @@
         }
       },
       "required": ["id", "judul", "jenis", "tanggal", "jamMulai", "deskripsi", "createdAt", "updatedAt"]
+    },
+    "SystemLog": {
+      "title": "SystemLog",
+      "description": "Catatan seluruh aktivitas aplikasi, log sistem, operasi database Firestore, dan rekaman error",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID unik log",
+          "maxLength": 64
+        },
+        "category": {
+          "type": "string",
+          "enum": ["DATABASE", "AUTH_SECURITY", "PENDAFTARAN", "ADMIN_ACTION", "PRESENSI", "SISTEM_ERROR"],
+          "description": "Kategori log aktivitas/sistem"
+        },
+        "level": {
+          "type": "string",
+          "enum": ["INFO", "SUCCESS", "WARN", "ERROR"],
+          "description": "Tingkat keparahan log"
+        },
+        "title": {
+          "type": "string",
+          "description": "Judul ringkas aktivitas/error",
+          "maxLength": 250
+        },
+        "detail": {
+          "type": "string",
+          "description": "Rincian aktivitas atau pesan error",
+          "maxLength": 3000
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Waktu log format ISO",
+          "maxLength": 100
+        },
+        "source": {
+          "type": "string",
+          "description": "Asal komponen atau modul",
+          "maxLength": 100
+        }
+      },
+      "required": ["id", "category", "level", "title", "detail", "timestamp"]
     }
   },
   "firestore": {
@@ -270,6 +313,10 @@
     "/activities/{activityId}": {
       "schema": "Activity",
       "description": "Koleksi jadwal dan presensi kegiatan yayasan"
+    },
+    "/system_logs/{logId}": {
+      "schema": "SystemLog",
+      "description": "Koleksi catatan seluruh aktivitas aplikasi, log sistem, dan error untuk menu Teknis (IT)"
     }
   }
 }

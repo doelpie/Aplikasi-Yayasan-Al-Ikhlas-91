@@ -13,7 +13,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import rawConfig from '../firebase-applet-config.json';
-import { Member, AppNotification } from './types';
+import { Member, AppNotification, SystemLogEntry } from './types';
 import { INITIAL_MEMBERS, SYARI_PHOTOS } from './data/initialData';
 
 // Support VITE_ environment variables (safe for git/production) with local fallback
@@ -41,6 +41,7 @@ export const MEMBERS_COLLECTION = 'members';
 export const TEMP_DATA_LAMA_COLLECTION = 'tempdatalama';
 export const SYSTEM_COUNTERS_COLLECTION = 'system_counters';
 export const NOTIFICATIONS_COLLECTION = 'notifications';
+export const SYSTEM_LOGS_COLLECTION = 'system_logs';
 const SEEDED_FLAG_KEY = 'yayasan_alikhlas_firestore_seeded_v1';
 
 // Error Handling Definition
@@ -1103,3 +1104,84 @@ export async function markAllNotificationsAsReadInFirestore(notifications: AppNo
     }
   }
 }
+
+// =========================================================================
+// KOLEKSI CATATAN SELURUH AKTIVITAS & LOG SISTEM / DATABASE (TEKNIS IT)
+// =========================================================================
+
+export async function saveSystemLogToFirestore(log: SystemLogEntry): Promise<void> {
+  const path = `${SYSTEM_LOGS_COLLECTION}/${log.id}`;
+  try {
+    const clean = cleanForFirestore({
+      ...log,
+      detail: (log.detail || '').slice(0, 3000),
+      title: (log.title || '').slice(0, 250),
+    });
+    await setDoc(doc(db, SYSTEM_LOGS_COLLECTION, log.id), clean);
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('[FIRESTORE_LOG_WRITE_NOTE]', error);
+  }
+}
+
+export async function fetchSystemLogsFromFirestore(): Promise<SystemLogEntry[]> {
+  try {
+    const snap = await getDocs(collection(db, SYSTEM_LOGS_COLLECTION));
+    const list: SystemLogEntry[] = [];
+    snap.forEach((d) => {
+      list.push(d.data() as SystemLogEntry);
+    });
+    list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return list;
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('Error fetching system logs:', error);
+    return [];
+  }
+}
+
+export function subscribeSystemLogsFirestore(
+  onUpdate: (logs: SystemLogEntry[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const path = SYSTEM_LOGS_COLLECTION;
+  const colRef = collection(db, path);
+
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: SystemLogEntry[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as SystemLogEntry);
+      });
+      list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      onUpdate(list);
+    },
+    (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
+      onError?.(error);
+    }
+  );
+}
+
+export async function clearSystemLogsInFirestore(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, SYSTEM_LOGS_COLLECTION));
+    const promises: Promise<void>[] = [];
+    snap.forEach((d) => {
+      promises.push(deleteDoc(d.ref));
+    });
+    await Promise.all(promises);
+  } catch (err) {
+    console.warn('Error clearing system logs in Firestore:', err);
+  }
+}
+

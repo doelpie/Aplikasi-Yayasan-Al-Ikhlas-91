@@ -37,6 +37,15 @@ service cloud.firestore {
              data.read is bool;
     }
 
+    function isValidSystemLog(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+             data.category in ['DATABASE', 'AUTH_SECURITY', 'PENDAFTARAN', 'ADMIN_ACTION', 'PRESENSI', 'SISTEM_ERROR'] &&
+             data.level in ['INFO', 'SUCCESS', 'WARN', 'ERROR'] &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 250 &&
+             data.detail is string && data.detail.size() <= 3000 &&
+             data.timestamp is string && data.timestamp.size() <= 100;
+    }
+
     // Default deny all
     match /{document=**} {
       allow read, write: if false;
@@ -90,6 +99,14 @@ service cloud.firestore {
       allow get: if isValidId(activityId);
       allow list: if true;
       allow create, update, delete: if isValidId(activityId);
+    }
+
+    // Koleksi Catatan Seluruh Aktivitas, Log Sistem & Database (Teknis IT)
+    match /system_logs/{logId} {
+      allow get: if isValidId(logId);
+      allow list: if true;
+      allow create, update: if isValidId(logId) && isValidSystemLog(incoming());
+      allow delete: if isValidId(logId);
     }
   }
 }

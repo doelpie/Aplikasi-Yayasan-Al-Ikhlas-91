@@ -96,3 +96,39 @@ export interface Activity {
   updatedAt: string;
 }
 
+// ==========================================
+// TIPE DATA MENU TEKNIS (IT) & LOGGING
+// ==========================================
+
+export type SystemLogCategory = 
+  | 'DATABASE' 
+  | 'AUTH_SECURITY' 
+  | 'PENDAFTARAN' 
+  | 'ADMIN_ACTION' 
+  | 'PRESENSI' 
+  | 'SISTEM_ERROR';
+
+export type SystemLogLevel = 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
+
+export interface SystemLogEntry {
+  id: string;
+  category: SystemLogCategory;
+  level: SystemLogLevel;
+  title: string;
+  detail: string;
+  timestamp: string; // ISO string
+  source?: string;
+  data?: Record<string, any>;
+}
+
+export interface BugDiagnosticResult {
+  id: string;
+  name: string;
+  category: 'KONEKSI' | 'INTEGRITAS_DATA' | 'RELASI_KELUARGA' | 'STORAGE_QUOTA' | 'SECURITY';
+  status: 'PASS' | 'WARN' | 'FAIL' | 'PENDING';
+  message: string;
+  latencyMs?: number;
+  details?: string[];
+  autoFixable?: boolean;
+}
+

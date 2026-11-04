@@ -25,7 +25,9 @@ import {
   RefreshCw,
   RotateCcw,
   Archive,
-  X
+  X,
+  Terminal,
+  Wrench
 } from 'lucide-react';
 import { 
   getPeranLabel, 
@@ -39,6 +41,8 @@ import {
 } from '../utils/storage';
 import { ActivityManagement } from './ActivityManagement';
 import { QrScannerModal } from './QrScannerModal';
+import { TechnicalITPanel } from './TechnicalITPanel';
+import { TechnicalAuthModal } from './TechnicalAuthModal';
 import { exportMembersToExcelWithImages, generateDocumentPreviewDataUrl } from '../utils/excelExport';
 
 interface AdminDashboardProps {
@@ -83,6 +87,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewCard,
   onViewDoc,
   onLogout,
+  onResetData,
   onOpenNotifications,
   onAddNewActivity,
   onUpdateActivity,
@@ -90,10 +95,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRecordAttendance,
   onManualCheckIn,
 }) => {
-  // Navigation: exactly 'anggota' or 'kegiatan'
-  const [activeNav, setActiveNav] = useState<'anggota' | 'kegiatan'>('anggota');
+  // Navigation: 'anggota' | 'kegiatan' | 'teknis'
+  const [activeNav, setActiveNav] = useState<'anggota' | 'kegiatan' | 'teknis'>('anggota');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerActivityId, setScannerActivityId] = useState<string | undefined>(undefined);
+
+  // IT Technical Page Access State (Protected with @Teguh9495)
+  const [isItAuthenticated, setIsItAuthenticated] = useState(false);
+  const [isItAuthModalOpen, setIsItAuthModalOpen] = useState(false);
+
+  const handleOpenTeknis = () => {
+    if (isItAuthenticated) {
+      setActiveNav('teknis');
+    } else {
+      setIsItAuthModalOpen(true);
+    }
+  };
 
   // Filter states for Anggota
   const [searchTerm, setSearchTerm] = useState('');
@@ -227,6 +244,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Tombol Halaman Teknis (IT) */}
+            <button
+              type="button"
+              onClick={handleOpenTeknis}
+              className={`px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5 border shadow-xs ${
+                activeNav === 'teknis'
+                  ? 'bg-[#d4af37] text-gray-950 border-[#d4af37]'
+                  : 'bg-white/15 hover:bg-white/25 text-white border-white/20'
+              }`}
+              title="Menu Halaman Teknis (IT) - Akses Khusus Tim IT (@Teguh9495)"
+            >
+              <Terminal className={`w-3.5 h-3.5 ${activeNav === 'teknis' ? 'text-gray-950' : 'text-[#d4af37]'}`} />
+              <span className="hidden sm:inline">Teknis (IT)</span>
+              <span className="sm:hidden">IT</span>
+              {isItAuthenticated && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              )}
+            </button>
+
             <button
               onClick={onOpenNotifications}
               className="relative p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors cursor-pointer"
@@ -334,6 +370,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   <Archive className="w-3.5 h-3.5 text-amber-700" />
                   <span>Data Terhapus ({tempDataLama.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenTeknis}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-900 hover:bg-black text-amber-300 border border-amber-500/40 transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
+                  title="Buka Menu Halaman Teknis (IT) untuk pengecekan bug, log sistem, dan database"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Teknis (IT)</span>
                 </button>
 
                 <button
@@ -722,7 +768,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
             </div>
           </div>
-        ) : (
+        ) : activeNav === 'kegiatan' ? (
           /* KEGIATAN MANAGEMENT VIEW */
           <ActivityManagement
             activities={activities}
@@ -736,6 +782,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }}
             onBackToMembers={() => setActiveNav('anggota')}
             onManualCheckIn={onManualCheckIn}
+          />
+        ) : (
+          /* TEKNIS (IT) VIEW - Protected by @Teguh9495 */
+          <TechnicalITPanel
+            members={members}
+            tempDataLama={tempDataLama}
+            onLockIT={() => {
+              setIsItAuthenticated(false);
+              setActiveNav('anggota');
+            }}
+            onRefreshData={onResetData}
           />
         )}
       </main>
@@ -1179,7 +1236,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <span className="text-[11px] sm:text-xs">Kegiatan</span>
           </button>
 
-          {/* 3. Menu Scan QR */}
+          {/* 3. Menu Teknis (IT) */}
+          <button
+            type="button"
+            onClick={handleOpenTeknis}
+            className={`flex-1 sm:flex-initial flex flex-col sm:flex-row items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl sm:rounded-full transition-all cursor-pointer ${
+              activeNav === 'teknis'
+                ? 'bg-[#0b5d34] text-white shadow-xs font-bold'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-emerald-50/70 font-semibold'
+            }`}
+            title="Menu Halaman Teknis (IT) - Akses Khusus IT (@Teguh9495)"
+          >
+            <Terminal className="w-4 h-4 sm:w-4 sm:h-4 shrink-0 text-amber-500" />
+            <span className="text-[11px] sm:text-xs">Teknis (IT)</span>
+          </button>
+
+          {/* 4. Menu Scan QR */}
           <button
             type="button"
             onClick={() => setIsScannerOpen(true)}
@@ -1190,7 +1262,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <span className="text-[11px] sm:text-xs">Scan QR</span>
           </button>
 
-          {/* 4. Menu Logout */}
+          {/* 5. Menu Logout */}
           <button
             type="button"
             onClick={onLogout}
@@ -1202,6 +1274,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
         </nav>
       </div>
+
+      {/* IT Access Authentication Modal (Protected: @Teguh9495) */}
+      {isItAuthModalOpen && (
+        <TechnicalAuthModal
+          onSuccess={() => {
+            setIsItAuthenticated(true);
+            setIsItAuthModalOpen(false);
+            setActiveNav('teknis');
+          }}
+          onClose={() => setIsItAuthModalOpen(false)}
+        />
+      )}
     </div>
   );
 };
