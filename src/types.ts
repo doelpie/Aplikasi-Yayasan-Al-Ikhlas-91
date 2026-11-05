@@ -88,6 +88,31 @@ export interface AppNotification {
   message: string;
   timestamp: string;
   read: boolean;
+
+  // Seluruh field lengkap pendaftar yang disimpan di koleksi Firestore `notifications`
+  // (Namun di UI aplikasi umum hanya ditampilkan Nama Anggota, ID Anggota, dan Tanggal+Jam detail)
+  regNumber?: string;
+  nik?: string;
+  nama?: string;
+  tempatTanggalLahir?: string;
+  alamat?: string;
+  noHp?: string;
+  noKk?: string;
+  peranKeluarga?: FamilyRole;
+  kepalaKeluargaId?: string;
+  namaKepalaKeluarga?: string;
+  jumlahKeluarga?: number;
+  email?: string;
+  fotoUrl?: string;
+  fotoName?: string;
+  ktpUrl?: string;
+  ktpName?: string;
+  kkUrl?: string;
+  kkName?: string;
+  status?: MemberStatus;
+  catatanPenolakan?: string;
+  tanggalDaftar?: string; // ISO string lengkap dengan tanggal & jam saat mendaftar
+  tanggalDisetujui?: string; // ISO string lengkap dengan tanggal & jam saat disetujui admin
 }
 
 export interface BroadcastMessage {

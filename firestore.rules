@@ -115,12 +115,15 @@ service cloud.firestore {
       allow create, update: if isValidId(counterId);
     }
 
-    // Koleksi Notifikasi Real-time
+    // Koleksi Notifikasi Real-time (Menampung seluruh data pendaftar di database Firestore)
     match /notifications/{notificationId} {
       allow get: if isValidId(notificationId);
       allow list: if true;
       allow create: if isValidId(notificationId) && isValidNotification(incoming());
-      allow update: if isValidId(notificationId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']) && incoming().read is bool;
+      allow update: if isValidId(notificationId) && (
+        (incoming().diff(existing()).affectedKeys().hasOnly(['read']) && incoming().read is bool) ||
+        isValidNotification(incoming())
+      );
       allow delete: if isValidId(notificationId);
     }
 

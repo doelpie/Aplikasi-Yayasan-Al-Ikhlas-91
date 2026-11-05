@@ -1159,12 +1159,44 @@ export function subscribeNotificationsFirestore(
   );
 }
 
-// Add a Notification to Firestore and verify it exists on the server
+// Add a Notification to Firestore (storing all complete registrant data in the database) and verify it exists on the server
 export async function addNotificationToFirestore(notif: AppNotification): Promise<void> {
   const path = `${NOTIFICATIONS_COLLECTION}/${notif.id}`;
   const notifDocRef = doc(db, NOTIFICATIONS_COLLECTION, notif.id);
   try {
-    await setDoc(notifDocRef, cleanForFirestore(notif));
+    const completeNotifPayload: AppNotification = {
+      id: notif.id,
+      memberId: notif.memberId || '',
+      memberName: notif.memberName || notif.nama || '',
+      type: notif.type,
+      message: notif.message || '',
+      timestamp: notif.timestamp || new Date().toISOString(),
+      read: Boolean(notif.read),
+      regNumber: notif.regNumber || '',
+      nik: notif.nik || '',
+      nama: notif.nama || notif.memberName || '',
+      tempatTanggalLahir: notif.tempatTanggalLahir || '',
+      alamat: notif.alamat || '',
+      noHp: notif.noHp || '',
+      noKk: notif.noKk || '',
+      peranKeluarga: notif.peranKeluarga || 'kepala_keluarga',
+      kepalaKeluargaId: notif.kepalaKeluargaId || '',
+      namaKepalaKeluarga: notif.namaKepalaKeluarga || '',
+      jumlahKeluarga: typeof notif.jumlahKeluarga === 'number' ? notif.jumlahKeluarga : 1,
+      email: notif.email || '',
+      fotoUrl: notif.fotoUrl || '',
+      fotoName: notif.fotoName || '',
+      ktpUrl: notif.ktpUrl || '',
+      ktpName: notif.ktpName || '',
+      kkUrl: notif.kkUrl || '',
+      kkName: notif.kkName || '',
+      status: notif.status || (notif.type === 'status_approved' ? 'disetujui' : notif.type === 'status_rejected' ? 'ditolak' : 'menunggu'),
+      catatanPenolakan: notif.catatanPenolakan || '',
+      tanggalDaftar: notif.tanggalDaftar || notif.timestamp || new Date().toISOString(),
+      tanggalDisetujui: notif.tanggalDisetujui || (notif.type === 'status_approved' ? (notif.timestamp || new Date().toISOString()) : ''),
+    };
+
+    await setDoc(notifDocRef, cleanForFirestore(completeNotifPayload));
     // Verify the notification document is readable on the server
     try {
       await getDocFromServer(notifDocRef);

@@ -747,14 +747,14 @@ export async function restoreMemberFromTempDataLamaAsync(
     status: 'SUCCESS',
   });
 
-  // 4. Buat notifikasi di Firestore 'notifications' baru kirimkan ke aplikasi
+  // 4. Buat notifikasi di Firestore 'notifications' (lengkap dengan seluruh data pendaftar di DB) baru kirimkan ke aplikasi
   const roleText = getPeranLabel(restoredMember.peranKeluarga);
-  const notif = await addNotificationAsync({
-    memberId: restoredMember.id,
-    memberName: restoredMember.nama,
-    type: restoredMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
-    message: `Data anggota "${restoredMember.nama}" (ID: ${restoredMember.id}, ${roleText}) berhasil dipulihkan kembali dari arsip data lama (tempdatalama).`,
-  });
+  const notif = await addNotificationAsync(
+    buildNotificationPayloadFromMember(restoredMember, {
+      type: restoredMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
+      message: `Data anggota "${restoredMember.nama}" (ID: ${restoredMember.id}, ${roleText}) telah dipulihkan kembali ke daftar anggota.`,
+    })
+  );
 
   soundEffects.playSuccess();
   triggerSystemNotification(
@@ -773,6 +773,47 @@ export async function restoreMemberFromTempDataLamaAsync(
   return restoredMember;
 }
 
+/**
+ * Membangun objek notifikasi yang menampung seluruh data lengkap pendaftar untuk disimpan
+ * di database Firestore koleksi `notifications`, sementara `message` hanya memuat data umum (Nama & ID).
+ */
+export function buildNotificationPayloadFromMember(
+  member: Member,
+  params: {
+    type: AppNotification['type'];
+    message: string;
+  }
+): Omit<AppNotification, 'id' | 'timestamp' | 'read'> {
+  return {
+    memberId: member.id,
+    memberName: member.nama,
+    type: params.type,
+    message: params.message,
+    regNumber: member.regNumber || '',
+    nik: member.nik || '',
+    nama: member.nama || '',
+    tempatTanggalLahir: member.tempatTanggalLahir || '',
+    alamat: member.alamat || '',
+    noHp: member.noHp || '',
+    noKk: member.noKk || '',
+    peranKeluarga: member.peranKeluarga || 'kepala_keluarga',
+    kepalaKeluargaId: member.kepalaKeluargaId || '',
+    namaKepalaKeluarga: member.namaKepalaKeluarga || '',
+    jumlahKeluarga: typeof member.jumlahKeluarga === 'number' ? member.jumlahKeluarga : (member.peranKeluarga === 'kepala_keluarga' ? 1 : 0),
+    email: member.email || '',
+    fotoUrl: member.fotoUrl || '',
+    fotoName: member.fotoName || '',
+    ktpUrl: member.ktpUrl || '',
+    ktpName: member.ktpName || '',
+    kkUrl: member.kkUrl || '',
+    kkName: member.kkName || '',
+    status: member.status || 'menunggu',
+    catatanPenolakan: member.catatanPenolakan || '',
+    tanggalDaftar: member.tanggalDaftar || new Date().toISOString(),
+    tanggalDisetujui: member.tanggalDisetujui || (member.status === 'disetujui' ? new Date().toISOString() : ''),
+  };
+}
+
 export function getStoredNotifications(): AppNotification[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -787,11 +828,30 @@ export function getStoredNotifications(): AppNotification[] {
 export function saveNotifications(notifications: AppNotification[]): void {
   if (typeof window === 'undefined') return;
   try {
-    const trimmed = notifications.slice(0, 30);
-    localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(trimmed));
+    // Strip heavy base64 images when caching to localStorage to prevent QuotaExceededError
+    // (Full images & complete fields remain stored in Firestore `notifications` collection)
+    const lightweight = notifications.slice(0, 30).map(n => ({
+      ...n,
+      fotoUrl: n.fotoUrl && n.fotoUrl.length > 1500 ? '' : n.fotoUrl,
+      ktpUrl: n.ktpUrl && n.ktpUrl.length > 1500 ? '' : n.ktpUrl,
+      kkUrl: n.kkUrl && n.kkUrl.length > 1500 ? '' : n.kkUrl,
+    }));
+    localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(lightweight));
   } catch (e: any) {
     try {
-      localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(notifications.slice(0, 10)));
+      const minimal = notifications.slice(0, 10).map(n => ({
+        id: n.id,
+        memberId: n.memberId,
+        memberName: n.memberName,
+        type: n.type,
+        message: n.message,
+        timestamp: n.timestamp,
+        read: n.read,
+        tanggalDaftar: n.tanggalDaftar,
+        tanggalDisetujui: n.tanggalDisetujui,
+        status: n.status,
+      }));
+      localStorage.setItem(STORAGE_NOTIF_KEY, JSON.stringify(minimal));
     } catch {}
     console.warn('Error saving notifications to localStorage:', e?.message || e);
   }
@@ -838,10 +898,13 @@ export function setCurrentUserSession(member: Member | null): void {
 
 export function addNotification(notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>): AppNotification {
   const all = getStoredNotifications();
+  const nowIso = new Date().toISOString();
   const newNotif: AppNotification = {
     ...notification,
     id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso,
+    tanggalDaftar: notification.tanggalDaftar || nowIso,
+    tanggalDisetujui: notification.tanggalDisetujui || (notification.type === 'status_approved' ? nowIso : undefined),
     read: false,
   };
   const updated = [newNotif, ...all.slice(0, 49)];
@@ -857,14 +920,17 @@ export function addNotification(notification: Omit<AppNotification, 'id' | 'time
 export async function addNotificationAsync(
   notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>
 ): Promise<AppNotification> {
+  const nowIso = new Date().toISOString();
   const newNotif: AppNotification = {
     ...notification,
     id: 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso,
+    tanggalDaftar: notification.tanggalDaftar || nowIso,
+    tanggalDisetujui: notification.tanggalDisetujui || (notification.type === 'status_approved' ? nowIso : undefined),
     read: false,
   };
 
-  // 1. Tulis & verifikasi pada koleksi 'notifications' di Firestore terlebih dahulu
+  // 1. Tulis & verifikasi pada koleksi 'notifications' di Firestore terlebih dahulu (beserta seluruh data lengkap pendaftar)
   try {
     await addNotificationToFirestore(newNotif);
   } catch (err) {
@@ -963,8 +1029,8 @@ export function getAvailableKepalaKeluarga(allMembers: Member[]): Member[] {
  * Alur Persetujuan / Penolakan Anggota oleh Admin secara Terverifikasi:
  * 1. Update status anggota (misal 'disetujui') pada koleksi `members` di Firestore dan verifikasi telah tersimpan di server.
  * 2. Pastikan data anggota langsung diperbarui dan muncul pada halaman Daftar Anggota (`saveMembers`).
- * 3. Buat dokumen notifikasi pada koleksi `notifications` di Firestore (`addNotificationAsync`).
- * 4. Baru kirimkan notifikasi ke aplikasi bahwa anggota sudah disetujui dan resmi terdaftar sebagai anggota.
+ * 3. Buat dokumen notifikasi pada koleksi `notifications` di Firestore (`addNotificationAsync`) yang menampung seluruh data lengkap pendaftar di database.
+ * 4. Baru kirimkan notifikasi ke aplikasi (tampilan umum hanya Nama, ID, dan detail tanggal+jam).
  */
 export async function updateMemberStatusAsync(
   memberId: string,
@@ -991,7 +1057,7 @@ export async function updateMemberStatusAsync(
     ...prevMember,
     status: newStatus,
     catatanPenolakan: newStatus === 'ditolak' ? (note || 'Data pendaftaran belum memenuhi syarat administrasi.') : undefined,
-    tanggalDisetujui: newStatus === 'disetujui' ? (prevMember.tanggalDisetujui || now) : prevMember.tanggalDisetujui,
+    tanggalDisetujui: newStatus === 'disetujui' ? now : prevMember.tanggalDisetujui,
     regNumber,
   };
 
@@ -1008,8 +1074,6 @@ export async function updateMemberStatusAsync(
   );
 
   // LANGKAH 1b: Sinkronkan tempat tampung sementara 'tempdatamenunggu'
-  // Jika sudah disetujui atau ditolak oleh Admin, hapus dari tempat tampung 'tempdatamenunggu' karena sudah resmi diproses di 'members'.
-  // Jika status dikembalikan ke 'menunggu', simpan kembali ke 'tempdatamenunggu'.
   if (newStatus === 'menunggu') {
     await saveToTempDataMenungguFirestore(updatedMember);
     const currentWaiting = getStoredTempDataMenunggu();
@@ -1030,7 +1094,7 @@ export async function updateMemberStatusAsync(
     saveMembers([updatedMember, ...latestMembers]);
   }
 
-  // LANGKAH 3: Buat dokumen notifikasi di koleksi 'notifications' pada Firestore
+  // LANGKAH 3: Buat dokumen notifikasi di koleksi 'notifications' pada Firestore (menyimpan seluruh data pendaftar di DB, pesan aplikasi hanya data umum Nama & ID)
   const roleText = getPeranLabel(updatedMember.peranKeluarga);
   const statusLabel = newStatus === 'disetujui' ? 'DISETUJUI' : newStatus === 'ditolak' ? 'DITOLAK' : 'MENUNGGU ACC';
   const messageText =
@@ -1039,12 +1103,12 @@ export async function updateMemberStatusAsync(
       : `Status pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah diubah menjadi ${statusLabel}.`;
 
   onStatusUpdate?.(`Mencatat notifikasi persetujuan ke koleksi 'notifications' Firestore...`);
-  const notification = await addNotificationAsync({
-    memberId: updatedMember.id,
-    memberName: updatedMember.nama,
-    type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
-    message: messageText,
-  });
+  const notification = await addNotificationAsync(
+    buildNotificationPayloadFromMember(updatedMember, {
+      type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
+      message: messageText,
+    })
+  );
 
   // LANGKAH 4: Kirimkan notifikasi ke aplikasi & bunyi indikator
   if (newStatus === 'disetujui') {
@@ -1094,7 +1158,7 @@ export function updateMemberStatus(
     ...prevMember,
     status: newStatus,
     catatanPenolakan: newStatus === 'ditolak' ? (note || 'Data pendaftaran belum memenuhi syarat administrasi.') : undefined,
-    tanggalDisetujui: newStatus === 'disetujui' ? (prevMember.tanggalDisetujui || now) : prevMember.tanggalDisetujui,
+    tanggalDisetujui: newStatus === 'disetujui' ? now : prevMember.tanggalDisetujui,
     regNumber,
   };
 
@@ -1113,12 +1177,12 @@ export function updateMemberStatus(
 
   const roleText = getPeranLabel(updatedMember.peranKeluarga);
   const statusLabel = newStatus === 'disetujui' ? 'DISETUJUI' : newStatus === 'ditolak' ? 'DITOLAK' : 'MENUNGGU ACC';
-  const notification = addNotification({
-    memberId: updatedMember.id,
-    memberName: updatedMember.nama,
-    type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
-    message: `Status pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah diubah menjadi ${statusLabel}.`,
-  });
+  const notification = addNotification(
+    buildNotificationPayloadFromMember(updatedMember, {
+      type: newStatus === 'disetujui' ? 'status_approved' : 'status_rejected',
+      message: `Status pendaftaran "${updatedMember.nama}" (ID: ${updatedMember.id}, ${roleText}) telah diubah menjadi ${statusLabel}.`,
+    })
+  );
 
   triggerSystemNotification(
     `Status Pendaftaran: ${statusLabel}`,
@@ -1477,15 +1541,15 @@ export async function addNewMemberAsync(
     const step8Start = Date.now();
     onStatusUpdate?.('Membuat data notifikasi pada tabel "notifications" di Firestore...');
 
-    const notification = await addNotificationAsync({
-      memberId: newMember.id,
-      memberName: newMember.nama,
-      type: newMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
-      message:
-        newMember.status === 'disetujui'
-          ? `Anggota baru "${newMember.nama}" (ID: ${newMember.id}, ${roleText}) telah ditambahkan dan langsung disetujui.`
-          : `Pendaftaran baru: "${newMember.nama}" (ID: ${newMember.id}) sebagai ${roleText} (No. KK: ${newMember.noKk}) telah masuk ke database dan menunggu persetujuan pengurus/admin.`,
-    });
+    const notification = await addNotificationAsync(
+      buildNotificationPayloadFromMember(newMember, {
+        type: newMember.status === 'disetujui' ? 'status_approved' : 'new_registration',
+        message:
+          newMember.status === 'disetujui'
+            ? `Anggota baru "${newMember.nama}" (ID: ${newMember.id}, ${roleText}) telah ditambahkan dan langsung disetujui.`
+            : `Pendaftaran baru: "${newMember.nama}" (ID: ${newMember.id}) sebagai ${roleText} telah masuk ke database dan menunggu persetujuan pengurus/admin.`,
+      })
+    );
 
     triggerSystemNotification('Pendaftaran Baru Masuk', `Nama: ${newMember.nama} (ID: ${newMember.id} - ${roleText})`);
 
@@ -1883,6 +1947,45 @@ export function formatIndonesianDate(isoOrDateString?: string): string {
     month: 'long',
     year: 'numeric',
   });
+}
+
+/**
+ * Memformat tanggal & jam detail dalam Bahasa Indonesia (contoh: "5 November 2026, Pukul 13.50.07 WITA").
+ * Jika string utama hanya berisi tanggal YYYY-MM-DD tanpa jam, otomatis menggabungkan jam dari fallbackIso jika tersedia.
+ */
+export function formatIndonesianDateTime(isoOrDateString?: string, fallbackIso?: string): string {
+  const source = isoOrDateString || fallbackIso;
+  if (!source) {
+    const now = new Date();
+    const dStr = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+    const tStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    return `${dStr}, Pukul ${tStr} WITA`;
+  }
+
+  let dateObj = new Date(source);
+  if (isNaN(dateObj.getTime())) return source;
+
+  // Jika source hanya YYYY-MM-DD (tanpa komponen jam 'T') dan ada fallbackIso yang memiliki jam
+  if (!source.includes('T') && fallbackIso && fallbackIso.includes('T')) {
+    const fallbackDate = new Date(fallbackIso);
+    if (!isNaN(fallbackDate.getTime())) {
+      dateObj.setHours(fallbackDate.getHours(), fallbackDate.getMinutes(), fallbackDate.getSeconds());
+    }
+  }
+
+  const datePart = dateObj.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const timePart = dateObj.toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  return `${datePart}, Pukul ${timePart} WITA`;
 }
 
 // ==========================================

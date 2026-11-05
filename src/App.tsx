@@ -287,8 +287,11 @@ export default function App() {
       memberId: created.id,
       memberName: created.nama,
       type: 'new_registration',
-      message: `Pendaftaran "${created.nama}" berhasil tersimpan ke database! Menunggu verifikasi pengurus.`,
-      timestamp: new Date().toISOString(),
+      message: `Pendaftaran "${created.nama}" (ID: ${created.id}) berhasil tersimpan ke database! Menunggu verifikasi pengurus.`,
+      timestamp: created.tanggalDaftar || new Date().toISOString(),
+      tanggalDaftar: created.tanggalDaftar || new Date().toISOString(),
+      status: created.status,
+      peranKeluarga: created.peranKeluarga,
       read: false,
     };
     setCurrentToast(notif);
@@ -317,9 +320,13 @@ export default function App() {
         id: 'update_ok_' + Date.now(),
         memberId: updated.id,
         memberName: updated.nama,
-        type: 'status_approved',
-        message: `Profil "${updated.nama}" berhasil diperbarui dan disinkronkan ke database.`,
+        type: updated.status === 'disetujui' ? 'status_approved' : 'data_updated',
+        message: `Profil "${updated.nama}" (ID: ${updated.id}) berhasil diperbarui dan disinkronkan ke database.`,
         timestamp: new Date().toISOString(),
+        tanggalDaftar: updated.tanggalDaftar,
+        tanggalDisetujui: updated.tanggalDisetujui,
+        status: updated.status,
+        peranKeluarga: updated.peranKeluarga,
         read: false,
       });
     } catch (err: any) {
@@ -412,6 +419,10 @@ export default function App() {
         type: 'status_approved',
         message: `Data anggota "${restored.nama}" (ID: ${restored.id}) berhasil dikembalikan dari tempdatalama ke daftar anggota.`,
         timestamp: new Date().toISOString(),
+        tanggalDaftar: restored.tanggalDaftar,
+        tanggalDisetujui: restored.tanggalDisetujui || new Date().toISOString(),
+        status: restored.status,
+        peranKeluarga: restored.peranKeluarga,
         read: false,
       });
     } catch (err: any) {
