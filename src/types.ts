@@ -39,6 +39,47 @@ export interface Member {
   deletedReason?: string;
 }
 
+/**
+ * Koleksi 'tempdatasebelumdaftar':
+ * Menyimpan sementara input formulir pendaftaran secara real-time (interval 5 detik)
+ * dengan keunikan idtempdata berdasarkan IP/Location, Browser, Versi HP/OS, dan IMEI/Device ID.
+ */
+export interface TempDataSebelumDaftar {
+  idtempdata: string;
+  ipLocation: string;
+  browserType: string;
+  deviceVersion: string;
+  deviceImei: string;
+  sourceForm: 'halaman_daftar_publik' | 'halaman_admin';
+  statusDraft: 'sedang_mengisi' | 'selesai_daftar';
+  finalMemberId?: string;
+
+  // Seluruh field pendaftaran (sama dengan Member)
+  regNumber?: string;
+  nik?: string;
+  noKk?: string;
+  nama?: string;
+  tempatTanggalLahir?: string;
+  alamat?: string;
+  noHp?: string;
+  email?: string;
+  peranKeluarga?: FamilyRole;
+  kepalaKeluargaId?: string;
+  namaKepalaKeluarga?: string;
+  jumlahKeluarga?: number;
+  fotoUrl?: string;
+  fotoName?: string;
+  ktpUrl?: string;
+  ktpName?: string;
+  kkUrl?: string;
+  kkName?: string;
+  status?: MemberStatus;
+  catatanPenolakan?: string;
+
+  createdAt: string; // ISO string
+  updatedAt: string; // ISO string
+}
+
 export interface AppNotification {
   id: string;
   memberId: string;
@@ -121,14 +162,23 @@ export interface SystemLogEntry {
   data?: Record<string, any>;
 }
 
+export interface FlaggedMemberAnomaly {
+  member: Member;
+  issues: string[];
+  isSystemDummyData: boolean;
+  hasMissingOrSystemProfilePhoto: boolean;
+  hasMissingOrSystemKtp: boolean;
+  hasMissingOrSystemKk: boolean;
+  hasDuplicateIdOrNik: boolean;
+}
+
 export interface BugDiagnosticResult {
   id: string;
   name: string;
-  category: 'KONEKSI' | 'INTEGRITAS_DATA' | 'RELASI_KELUARGA' | 'STORAGE_QUOTA' | 'SECURITY';
+  category: 'KONEKSI' | 'INTEGRITAS_DATA' | 'RELASI_KELUARGA' | 'STORAGE_QUOTA' | 'SECURITY' | 'AUDIT_FOTO_DOKUMEN';
   status: 'PASS' | 'WARN' | 'FAIL' | 'PENDING';
   message: string;
   latencyMs?: number;
   details?: string[];
   autoFixable?: boolean;
 }
-

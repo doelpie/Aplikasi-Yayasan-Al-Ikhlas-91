@@ -43,10 +43,12 @@ import { ActivityManagement } from './ActivityManagement';
 import { QrScannerModal } from './QrScannerModal';
 import { TechnicalITPanel } from './TechnicalITPanel';
 import { TechnicalAuthModal } from './TechnicalAuthModal';
+import { FastMemberAvatar } from './FastMemberAvatar';
 import { exportMembersToExcelWithImages, generateDocumentPreviewDataUrl } from '../utils/excelExport';
 
 interface AdminDashboardProps {
   members: Member[];
+  tempDataMenunggu?: Member[];
   tempDataLama?: Member[];
   activities: Activity[];
   notifications: AppNotification[];
@@ -75,6 +77,7 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   members,
+  tempDataMenunggu = [],
   tempDataLama = [],
   activities,
   notifications,
@@ -574,19 +577,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     >
                       <div className="flex items-start gap-3">
                         {/* Foto Diri */}
-                        <div className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl overflow-hidden bg-emerald-50 border-2 border-[#0b5d34] shrink-0">
-                          {member.fotoUrl ? (
-                            <img
-                              src={member.fotoUrl}
-                              alt={member.nama}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[#0b5d34] font-bold text-base">
-                              {getInitials(member.nama)}
-                            </div>
-                          )}
-                        </div>
+                        <FastMemberAvatar
+                          src={member.fotoUrl}
+                          name={member.nama}
+                          className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl overflow-hidden bg-emerald-50 border-2 border-[#0b5d34] shrink-0"
+                        />
 
                         <div className="flex-1 min-w-0">
                           {/* Name & Status */}
@@ -787,12 +782,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           /* TEKNIS (IT) VIEW - Protected by @Teguh9495 */
           <TechnicalITPanel
             members={members}
+            tempDataMenunggu={tempDataMenunggu}
             tempDataLama={tempDataLama}
+            onApprove={onApprove}
+            onReject={onReject}
+            onEditMember={onEditMember}
+            onDeleteMember={onDeleteMember}
+            onRestoreFromTempDataLama={onRestoreFromTempDataLama}
             onLockIT={() => {
               setIsItAuthenticated(false);
               setActiveNav('anggota');
             }}
-            onRefreshData={onResetData}
           />
         )}
       </main>
@@ -1166,6 +1166,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         type="button"
                         disabled={restoringTempId === item.id}
                         onClick={async () => {
+                          if (!window.confirm(`Pulihkan kembali data anggota "${item.nama}" (ID: ${item.id}, NIK: ${item.nik}) beserta seluruh field dan lampiran fotonya dari tempdatalama ke koleksi members?`)) {
+                            return;
+                          }
                           setRestoringTempId(item.id);
                           try {
                             await onRestoreFromTempDataLama(item);

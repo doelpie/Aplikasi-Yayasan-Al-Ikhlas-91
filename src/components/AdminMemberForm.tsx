@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Member, MemberStatus, FamilyRole } from '../types';
-import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2, RotateCcw } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Save, Camera, Upload, FileText, Check, Trash2, RotateCcw, Database } from 'lucide-react';
 import { getAvailableKepalaKeluarga, checkNikAvailability, restoreMemberFromTempDataLamaAsync, getPeranLabel } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
 import { compressImage } from '../utils/imageCompressor';
+import {
+  generateUniqueIdTempData,
+  syncDraftToTempDataSebelumDaftar,
+  resolveIpLocation,
+} from '../utils/tempPreRegTracker';
 
 interface AdminMemberFormProps {
   member?: Member | null;
@@ -45,7 +50,132 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
   const [deletedMatchMember, setDeletedMatchMember] = useState<Member | null>(null);
   const [isRestoringDeleted, setIsRestoringDeleted] = useState(false);
 
+  // State & Ref untuk tempdatasebelumdaftar (saat tambah anggota di Admin, interval 5 detik)
+  const [idTempData, setIdTempData] = useState<string>('');
+  const [lastDraftSyncTime, setLastDraftSyncTime] = useState<string | null>(null);
+  const idTempDataRef = useRef<string>('');
+  const lastSyncedSignatureRef = useRef<string>('');
+  const draftStateRef = useRef({
+    nik: '',
+    noKk: '',
+    nama: '',
+    tempatTanggalLahir: '',
+    alamat: '',
+    noHp: '',
+    email: '',
+    peranKeluarga: 'kepala_keluarga' as FamilyRole,
+    kepalaKeluargaId: '',
+    namaKepalaKeluarga: '',
+    jumlahKeluarga: 1,
+    fotoUrl: '',
+    fotoName: '',
+    ktpUrl: '',
+    ktpName: '',
+    kkUrl: '',
+    kkName: '',
+  });
+
   const availableHeads = getAvailableKepalaKeluarga(allMembers).filter(h => h.id !== member?.id);
+
+  useEffect(() => {
+    if (!isEdit) {
+      resolveIpLocation().catch(() => {});
+    }
+  }, [isEdit]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const head = allMembers.find(m => m.id === selectedHeadId);
+    draftStateRef.current = {
+      nik,
+      noKk,
+      nama,
+      tempatTanggalLahir,
+      alamat,
+      noHp,
+      email,
+      peranKeluarga,
+      kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedHeadId : '',
+      namaKepalaKeluarga: peranKeluarga !== 'kepala_keluarga' ? (head?.nama || '') : '',
+      jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
+      fotoUrl: fotoUrl || '',
+      fotoName: fotoUrl ? 'foto_admin.jpg' : '',
+      ktpUrl: ktpUrl || '',
+      ktpName: ktpName || '',
+      kkUrl: kkUrl || '',
+      kkName: kkName || '',
+    };
+
+    const hasStartedTyping = Boolean(
+      nik.trim() || noKk.trim() || nama.trim() || tempatTanggalLahir.trim() || noHp.trim()
+    );
+    if (hasStartedTyping && !idTempDataRef.current) {
+      const newTempId = generateUniqueIdTempData();
+      idTempDataRef.current = newTempId;
+      setIdTempData(newTempId);
+      syncDraftToTempDataSebelumDaftar(newTempId, {
+        ...draftStateRef.current,
+        sourceForm: 'halaman_admin',
+        statusDraft: 'sedang_mengisi',
+      })
+        .then(() => setLastDraftSyncTime(new Date().toLocaleTimeString('id-ID')))
+        .catch(() => {});
+    }
+  }, [
+    isEdit,
+    nik,
+    noKk,
+    nama,
+    tempatTanggalLahir,
+    alamat,
+    noHp,
+    email,
+    peranKeluarga,
+    selectedHeadId,
+    jumlahKeluarga,
+    fotoUrl,
+    ktpUrl,
+    ktpName,
+    kkUrl,
+    kkName,
+    allMembers,
+  ]);
+
+  // Auto-sync interval 5 detik (5000ms) ke koleksi Firestore 'tempdatasebelumdaftar'
+  useEffect(() => {
+    if (isEdit) return;
+    const interval = setInterval(() => {
+      if (!idTempDataRef.current) return;
+      const current = draftStateRef.current;
+      const sig = JSON.stringify({
+        nik: current.nik,
+        noKk: current.noKk,
+        nama: current.nama,
+        ttl: current.tempatTanggalLahir,
+        alamat: current.alamat,
+        noHp: current.noHp,
+        email: current.email,
+        peran: current.peranKeluarga,
+        headId: current.kepalaKeluargaId,
+        jml: current.jumlahKeluarga,
+        fotoLen: current.fotoUrl.length,
+        ktpLen: current.ktpUrl.length,
+        kkLen: current.kkUrl.length,
+      });
+      if (sig === lastSyncedSignatureRef.current) return;
+      lastSyncedSignatureRef.current = sig;
+
+      syncDraftToTempDataSebelumDaftar(idTempDataRef.current, {
+        ...current,
+        sourceForm: 'halaman_admin',
+        statusDraft: 'sedang_mengisi',
+      })
+        .then(() => setLastDraftSyncTime(new Date().toLocaleTimeString('id-ID')))
+        .catch(() => {});
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isEdit]);
 
   const handleHeadChange = (headId: string) => {
     setSelectedHeadId(headId);
@@ -169,6 +299,18 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
         status,
         catatanPenolakan: status === 'ditolak' ? catatanPenolakan.trim() : undefined,
       });
+
+      if (!isEdit) {
+        const finalTempId = idTempDataRef.current || generateUniqueIdTempData();
+        syncDraftToTempDataSebelumDaftar(finalTempId, {
+          ...draftStateRef.current,
+          nik: cleanNik,
+          nama: nama.trim(),
+          noKk: noKk.trim(),
+          sourceForm: 'halaman_admin',
+          statusDraft: 'selesai_daftar',
+        }).catch(() => {});
+      }
     } catch (err: any) {
       setError(err?.message || 'Gagal menyimpan data anggota.');
     } finally {
@@ -201,9 +343,20 @@ export const AdminMemberForm: React.FC<AdminMemberFormProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-          <h2 className="text-xl font-bold text-[#0b5d34]">
-            {isEdit ? 'Edit Data Anggota (Admin)' : 'Tambah Anggota Baru (Admin)'}
-          </h2>
+          <div>
+            <h2 className="text-xl font-bold text-[#0b5d34]">
+              {isEdit ? 'Edit Data Anggota (Admin)' : 'Tambah Anggota Baru (Admin)'}
+            </h2>
+            {!isEdit && idTempData && (
+              <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-900">
+                <Database className="w-3 h-3 text-[#0b5d34]" />
+                <span className="font-mono font-bold text-[#0b5d34] truncate max-w-[200px]">{idTempData}</span>
+                <span className="text-emerald-700">
+                  &bull; Sync 5d {lastDraftSyncTime ? `(${lastDraftSyncTime})` : ''}
+                </span>
+              </div>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 p-1.5 rounded-full hover:bg-gray-100 transition-colors cursor-pointer"

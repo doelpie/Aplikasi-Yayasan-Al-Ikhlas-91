@@ -2,7 +2,7 @@
   "entities": {
     "Member": {
       "title": "Member",
-      "description": "Anggota Yayasan Al Ikhlas Sembilan Satu",
+      "description": "Anggota Yayasan Al Ikhlas Sembilan Satu (sama persis antara members dan tempdatalama)",
       "type": "object",
       "properties": {
         "id": {
@@ -72,7 +72,7 @@
         "fotoUrl": {
           "type": "string",
           "description": "URL foto diri profil berbusana rapi dan syar'i (compressed)",
-          "maxLength": 250000
+          "maxLength": 350000
         },
         "fotoName": {
           "type": "string",
@@ -82,7 +82,7 @@
         "ktpUrl": {
           "type": "string",
           "description": "URL lampiran foto/dokumen KTP (compressed)",
-          "maxLength": 250000
+          "maxLength": 350000
         },
         "ktpName": {
           "type": "string",
@@ -92,7 +92,7 @@
         "kkUrl": {
           "type": "string",
           "description": "URL lampiran foto/dokumen KK (compressed)",
-          "maxLength": 250000
+          "maxLength": 350000
         },
         "kkName": {
           "type": "string",
@@ -123,9 +123,171 @@
           "type": "string",
           "description": "Waktu data dihapus dan dipindahkan ke tempdatalama format ISO",
           "maxLength": 100
+        },
+        "deletedReason": {
+          "type": "string",
+          "description": "Alasan penghapusan data ke tempdatalama",
+          "maxLength": 500
         }
       },
       "required": ["id", "nik", "nama", "alamat", "noHp", "noKk", "peranKeluarga", "status", "tanggalDaftar"]
+    },
+    "TempDataSebelumDaftar": {
+      "title": "TempDataSebelumDaftar",
+      "description": "Data sementara calon anggota yang sedang mengetik formulir pendaftaran (auto-sync setiap 5 detik) dengan keunikan perangkat",
+      "type": "object",
+      "properties": {
+        "idtempdata": {
+          "type": "string",
+          "description": "ID unik data sementara berdasarkan IP/Location, Browser, Versi HP/OS, dan IMEI/Signature perangkat",
+          "maxLength": 128
+        },
+        "ipLocation": {
+          "type": "string",
+          "description": "IP Address dan Lokasi / Zona Waktu pendaftar",
+          "maxLength": 200
+        },
+        "browserType": {
+          "type": "string",
+          "description": "Tipe dan versi browser yang digunakan",
+          "maxLength": 200
+        },
+        "deviceVersion": {
+          "type": "string",
+          "description": "Versi HP / Sistem Operasi dan model perangkat",
+          "maxLength": 200
+        },
+        "deviceImei": {
+          "type": "string",
+          "description": "Identitas unik perangkat / IMEI signature",
+          "maxLength": 128
+        },
+        "sourceForm": {
+          "type": "string",
+          "enum": ["halaman_daftar_publik", "halaman_admin"],
+          "description": "Sumber formulir pendaftaran"
+        },
+        "statusDraft": {
+          "type": "string",
+          "enum": ["sedang_mengisi", "selesai_daftar"],
+          "description": "Status pengisian draft pendaftaran"
+        },
+        "finalMemberId": {
+          "type": "string",
+          "description": "ID Anggota resmi setelah klik Daftar",
+          "maxLength": 64
+        },
+        "regNumber": {
+          "type": "string",
+          "description": "Nomor Registrasi Anggota",
+          "maxLength": 100
+        },
+        "nik": {
+          "type": "string",
+          "description": "Nomor KTP atau KIA yang sedang diketik",
+          "maxLength": 50
+        },
+        "noKk": {
+          "type": "string",
+          "description": "Nomor Kartu Keluarga yang sedang diketik",
+          "maxLength": 50
+        },
+        "nama": {
+          "type": "string",
+          "description": "Nama Lengkap yang sedang diketik",
+          "maxLength": 250
+        },
+        "tempatTanggalLahir": {
+          "type": "string",
+          "description": "Tempat dan Tanggal Lahir",
+          "maxLength": 200
+        },
+        "alamat": {
+          "type": "string",
+          "description": "Alamat Lengkap",
+          "maxLength": 1000
+        },
+        "noHp": {
+          "type": "string",
+          "description": "Nomor WhatsApp atau Telepon",
+          "maxLength": 50
+        },
+        "email": {
+          "type": "string",
+          "description": "Email calon anggota",
+          "maxLength": 200
+        },
+        "peranKeluarga": {
+          "type": "string",
+          "enum": ["kepala_keluarga", "istri", "anak"],
+          "description": "Status dalam keluarga"
+        },
+        "kepalaKeluargaId": {
+          "type": "string",
+          "description": "ID Kepala Keluarga terkait",
+          "maxLength": 64
+        },
+        "namaKepalaKeluarga": {
+          "type": "string",
+          "description": "Nama Kepala Keluarga terkait",
+          "maxLength": 250
+        },
+        "jumlahKeluarga": {
+          "type": "number",
+          "description": "Jumlah anggota keluarga"
+        },
+        "fotoUrl": {
+          "type": "string",
+          "description": "Foto diri yang diunggah sementara",
+          "maxLength": 350000
+        },
+        "fotoName": {
+          "type": "string",
+          "description": "Nama file foto diri",
+          "maxLength": 200
+        },
+        "ktpUrl": {
+          "type": "string",
+          "description": "Lampiran KTP sementara",
+          "maxLength": 350000
+        },
+        "ktpName": {
+          "type": "string",
+          "description": "Nama file KTP",
+          "maxLength": 200
+        },
+        "kkUrl": {
+          "type": "string",
+          "description": "Lampiran KK sementara",
+          "maxLength": 350000
+        },
+        "kkName": {
+          "type": "string",
+          "description": "Nama file KK",
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": ["menunggu", "disetujui", "ditolak"],
+          "description": "Target status pendaftaran"
+        },
+        "catatanPenolakan": {
+          "type": "string",
+          "description": "Catatan penolakan",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Waktu pertama kali mengetik format ISO",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Waktu sinkronisasi 5 detik terakhir format ISO",
+          "maxLength": 100
+        }
+      },
+      "required": ["idtempdata", "ipLocation", "browserType", "deviceVersion", "deviceImei", "sourceForm", "statusDraft", "createdAt", "updatedAt"]
     },
     "SystemCounter": {
       "title": "SystemCounter",
@@ -298,9 +460,17 @@
       "schema": "Member",
       "description": "Koleksi data anggota aktif Yayasan Al Ikhlas Sembilan Satu"
     },
+    "/tempdatamenunggu/{memberId}": {
+      "schema": "Member",
+      "description": "Koleksi tempat tampung sementara data pendaftar baru yang menunggu persetujuan admin beserta seluruh field lengkap"
+    },
     "/tempdatalama/{memberId}": {
       "schema": "Member",
-      "description": "Koleksi sementara penampung data anggota yang terhapus agar dapat dipulihkan kembali"
+      "description": "Koleksi sementara penampung data anggota yang terhapus beserta seluruh field lengkap agar dapat dipulihkan kembali atas konfirmasi admin"
+    },
+    "/tempdatasebelumdaftar/{idtempdata}": {
+      "schema": "TempDataSebelumDaftar",
+      "description": "Koleksi sementara penampung input formulir pendaftaran secara real-time (auto-sync setiap 5 detik) dengan ID unik berbasis perangkat"
     },
     "/system_counters/{counterId}": {
       "schema": "SystemCounter",

@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Member, FamilyRole } from '../types';
-import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users, ShieldCheck, Check, Upload, Image, FileText, Trash2, RotateCcw } from 'lucide-react';
+import { FileUp, CheckCircle2, AlertCircle, Info, Sparkles, X, Camera, User, Users, ShieldCheck, Check, Upload, Image, FileText, Trash2, RotateCcw, Database } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getAvailableKepalaKeluarga, getPeranLabel, checkNikAvailability, restoreMemberFromTempDataLamaAsync } from '../utils/storage';
 import { SYARI_PHOTOS } from '../data/initialData';
 import { compressImage } from '../utils/imageCompressor';
+import {
+  generateUniqueIdTempData,
+  syncDraftToTempDataSebelumDaftar,
+  resolveIpLocation,
+} from '../utils/tempPreRegTracker';
 
 // Sample preview data URIs for demo testing
 const SAMPLE_KTP_IMG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="250" viewBox="0 0 400 250"><rect width="400" height="250" rx="16" fill="%230b5d34"/><rect x="12" y="12" width="376" height="226" rx="12" fill="%23f0fdf4"/><text x="24" y="45" font-family="sans-serif" font-size="15" font-weight="bold" fill="%230b5d34">REPUBLIK INDONESIA</text><text x="24" y="66" font-family="sans-serif" font-size="11" font-weight="bold" fill="%23166534">KARTU TANDA PENDUDUK / KIA</text><rect x="24" y="85" width="80" height="105" rx="8" fill="%23bbf7d0"/><text x="40" y="145" font-family="sans-serif" font-size="32" fill="%23166534">👤</text><text x="120" y="105" font-family="sans-serif" font-size="12" font-weight="bold" fill="%231f2937">NIK : 5103051408860012</text><text x="120" y="128" font-family="sans-serif" font-size="11" fill="%23374151">Nama : Achmad Zaini M.</text><text x="120" y="150" font-family="sans-serif" font-size="11" fill="%23374151">Alamat : Dalung, Badung</text><text x="120" y="172" font-family="sans-serif" font-size="10" font-weight="bold" fill="%2315803d">✓ DOKUMEN VALID KTP</text></svg>';
@@ -62,8 +67,132 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   const [deletedMatchMember, setDeletedMatchMember] = useState<Member | null>(null);
   const [isRestoringDeleted, setIsRestoringDeleted] = useState(false);
 
+  // State & Ref untuk tempdatasebelumdaftar (sinkronisasi interval 5 detik)
+  const [idTempData, setIdTempData] = useState<string>('');
+  const [lastDraftSyncTime, setLastDraftSyncTime] = useState<string | null>(null);
+  const idTempDataRef = useRef<string>('');
+  const lastSyncedSignatureRef = useRef<string>('');
+  const draftStateRef = useRef({
+    nik: '',
+    noKk: '',
+    nama: '',
+    tempatTanggalLahir: '',
+    alamat: '',
+    noHp: '',
+    email: '',
+    peranKeluarga: 'kepala_keluarga' as FamilyRole,
+    kepalaKeluargaId: '',
+    namaKepalaKeluarga: '',
+    jumlahKeluarga: 1,
+    fotoUrl: '',
+    fotoName: '',
+    ktpUrl: '',
+    ktpName: '',
+    kkUrl: '',
+    kkName: '',
+  });
+
   // Available Kepala Keluarga in the system
   const availableHeads = getAvailableKepalaKeluarga(allMembers);
+
+  // Resolve IP location once on mount so idtempdata has rich IP/Location metadata
+  useEffect(() => {
+    resolveIpLocation().catch(() => {});
+  }, []);
+
+  // Keep draftStateRef updated with all form fields
+  useEffect(() => {
+    const head = allMembers.find(m => m.id === selectedKepalaKeluargaId);
+    draftStateRef.current = {
+      nik,
+      noKk,
+      nama,
+      tempatTanggalLahir,
+      alamat,
+      noHp,
+      email,
+      peranKeluarga,
+      kepalaKeluargaId: peranKeluarga !== 'kepala_keluarga' ? selectedKepalaKeluargaId : '',
+      namaKepalaKeluarga: peranKeluarga !== 'kepala_keluarga' ? (head?.nama || '') : '',
+      jumlahKeluarga: peranKeluarga === 'kepala_keluarga' ? (Number(jumlahKeluarga) || 1) : 0,
+      fotoUrl: fotoData?.url || '',
+      fotoName: fotoData?.name || '',
+      ktpUrl: ktpData?.url || '',
+      ktpName: ktpData?.name || '',
+      kkUrl: kkData?.url || '',
+      kkName: kkData?.name || '',
+    };
+
+    // Segera buat idtempdata unik saat user mulai mengetik Nomor KK, Nomor KTP (NIK), Nama, atau field lainnya
+    const hasStartedTyping = Boolean(
+      nik.trim() || noKk.trim() || nama.trim() || tempatTanggalLahir.trim() || noHp.trim()
+    );
+    if (hasStartedTyping && !idTempDataRef.current) {
+      const newTempId = generateUniqueIdTempData();
+      idTempDataRef.current = newTempId;
+      setIdTempData(newTempId);
+      // Simpan inisialisasi pertama ke koleksi tempdatasebelumdaftar
+      syncDraftToTempDataSebelumDaftar(newTempId, {
+        ...draftStateRef.current,
+        sourceForm: 'halaman_daftar_publik',
+        statusDraft: 'sedang_mengisi',
+      }).then(() => {
+        setLastDraftSyncTime(new Date().toLocaleTimeString('id-ID'));
+      }).catch(() => {});
+    }
+  }, [
+    nik,
+    noKk,
+    nama,
+    tempatTanggalLahir,
+    alamat,
+    noHp,
+    email,
+    peranKeluarga,
+    selectedKepalaKeluargaId,
+    jumlahKeluarga,
+    fotoData,
+    ktpData,
+    kkData,
+    allMembers,
+  ]);
+
+  // Interval 5 detik (5000ms) untuk menyimpan dan menyinkronkan data sementara ke koleksi Firestore 'tempdatasebelumdaftar'
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!idTempDataRef.current || submittedMember) return;
+      const current = draftStateRef.current;
+      const sig = JSON.stringify({
+        nik: current.nik,
+        noKk: current.noKk,
+        nama: current.nama,
+        ttl: current.tempatTanggalLahir,
+        alamat: current.alamat,
+        noHp: current.noHp,
+        email: current.email,
+        peran: current.peranKeluarga,
+        headId: current.kepalaKeluargaId,
+        jml: current.jumlahKeluarga,
+        fotoLen: current.fotoUrl.length,
+        ktpLen: current.ktpUrl.length,
+        kkLen: current.kkUrl.length,
+      });
+      if (sig === lastSyncedSignatureRef.current) return;
+      lastSyncedSignatureRef.current = sig;
+
+      syncDraftToTempDataSebelumDaftar(idTempDataRef.current, {
+        ...current,
+        sourceForm: 'halaman_daftar_publik',
+        statusDraft: 'sedang_mengisi',
+      })
+        .then(() => {
+          setLastDraftSyncTime(new Date().toLocaleTimeString('id-ID'));
+        })
+        .catch(() => {});
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [submittedMember]);
 
   // When selected head of family changes, auto-fill No. KK and Alamat
   useEffect(() => {
@@ -78,7 +207,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     }
   }, [selectedKepalaKeluargaId, peranKeluarga, allMembers, alamat]);
 
-  // Handle Role change
+  // Handle Role change (tidak mengisi foto otomatis dari sistem agar anggota mengunggah foto asli sendiri)
   const handleRoleChange = (role: FamilyRole) => {
     setPeranKeluarga(role);
     setError(null);
@@ -87,9 +216,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
       if (!isHeadOfFamilyLoggedIn) {
         setNoKk('');
       }
-      setFotoData({ url: SYARI_PHOTOS.kepalaKeluarga, name: 'foto_syari_kepala_keluarga.jpg' });
     } else if (role === 'istri') {
-      setFotoData({ url: SYARI_PHOTOS.istri, name: 'foto_syari_istri_muslimah.jpg' });
       if (currentUserSession?.peranKeluarga === 'kepala_keluarga') {
         setSelectedKepalaKeluargaId(currentUserSession.id);
         setNoKk(currentUserSession.noKk);
@@ -98,7 +225,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         setNoKk(availableHeads[0].noKk);
       }
     } else {
-      setFotoData({ url: SYARI_PHOTOS.anakLaki, name: 'foto_syari_anak_10_tahun.jpg' });
       if (currentUserSession?.peranKeluarga === 'kepala_keluarga') {
         setSelectedKepalaKeluargaId(currentUserSession.id);
         setNoKk(currentUserSession.noKk);
@@ -355,6 +481,25 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         (status) => setStatusText(status)
       );
 
+      // Tandai data sementara di koleksi 'tempdatasebelumdaftar' telah selesai didaftarkan
+      const finalTempId = idTempDataRef.current || generateUniqueIdTempData();
+      idTempDataRef.current = finalTempId;
+      syncDraftToTempDataSebelumDaftar(finalTempId, {
+        ...draftStateRef.current,
+        nik: cleanNik,
+        nama: nama.trim(),
+        noKk: cleanKk || noKk.trim(),
+        fotoUrl: finalFoto,
+        fotoName: fotoData.name,
+        ktpUrl: finalKtp,
+        ktpName: ktpData.name,
+        kkUrl: finalKk,
+        kkName: kkData.name,
+        sourceForm: 'halaman_daftar_publik',
+        statusDraft: 'selesai_daftar',
+        finalMemberId: created.id,
+      }).catch(() => {});
+
       setSubmittedMember(created);
       try {
         confetti({
@@ -496,6 +641,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 setFotoData(null);
                 setKtpData(null);
                 setKkData(null);
+                idTempDataRef.current = '';
+                lastSyncedSignatureRef.current = '';
+                setIdTempData('');
+                setLastDraftSyncTime(null);
               }}
               className="py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-2xl transition-all cursor-pointer text-sm"
             >
@@ -512,13 +661,29 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   return (
     <div className="max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-6 pt-2 pb-28">
       <div className="bg-white rounded-3xl p-4 sm:p-7 shadow-xs border border-gray-100">
-        <div className="pb-4 border-b border-gray-100">
-          <h2 className="text-xl sm:text-2xl font-bold text-[#0b5d34]">
-            Tambah Anggota
-          </h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Formulir Pendaftaran Yayasan Al Ikhlas Sembilan Satu
-          </p>
+        <div className="pb-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold text-[#0b5d34]">
+              Tambah Anggota
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Formulir Pendaftaran Yayasan Al Ikhlas Sembilan Satu
+            </p>
+          </div>
+
+          {idTempData && (
+            <div className="px-2.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-900 flex items-center gap-1.5">
+              <Database className="w-3.5 h-3.5 text-[#0b5d34] shrink-0" />
+              <div>
+                <div className="font-bold font-mono text-[#0b5d34] truncate max-w-[210px]" title={idTempData}>
+                  ID Temp: {idTempData}
+                </div>
+                <div className="text-[9px] text-emerald-700">
+                  Auto-sync 5 dtk ke <code>tempdatasebelumdaftar</code> {lastDraftSyncTime ? `(${lastDraftSyncTime})` : ''}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (

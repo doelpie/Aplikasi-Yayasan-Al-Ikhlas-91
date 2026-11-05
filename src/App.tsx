@@ -3,9 +3,11 @@ import { Member, AppNotification, BroadcastMessage, Activity, ActivityAttendee }
 import { 
   getStoredMembers, 
   saveMembers, 
+  getStoredTempDataMenunggu,
+  saveTempDataMenunggu,
   getStoredTempDataLama,
   saveTempDataLama,
-  ensureAgusAndSriyonoInMemberList,
+  reconcileAuthoritativeMembers,
   restoreMemberFromTempDataLamaAsync,
   getStoredNotifications, 
   saveNotifications,
@@ -41,10 +43,10 @@ import { DocumentViewerModal } from './components/DocumentViewerModal';
 import { NotificationToast } from './components/NotificationToast';
 import { 
   subscribeMembersFirestore, 
+  subscribeTempDataMenungguFirestore,
   subscribeTempDataLamaFirestore,
   subscribeNotificationsFirestore, 
   seedInitialDataIfEmpty,
-  repairAgusAndSriyonoDataInFirestore,
   subscribeToQuotaLimitErrors,
   isFirestoreQuotaError,
   QUOTA_LIMIT_MESSAGE
@@ -65,9 +67,13 @@ export default function App() {
 
   // Data State
   const [members, setMembers] = useState<Member[]>(() => getStoredMembers());
+  const [tempDataMenunggu, setTempDataMenunggu] = useState<Member[]>(() => getStoredTempDataMenunggu());
   const [tempDataLama, setTempDataLama] = useState<Member[]>(() => getStoredTempDataLama());
   const [activities, setActivities] = useState<Activity[]>(() => getStoredActivities());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotifications());
+  const latestRemoteMembersRef = React.useRef<Member[]>(getStoredMembers());
+  const latestRemoteWaitingRef = React.useRef<Member[]>(getStoredTempDataMenunggu());
+  const latestRemoteDeletedRef = React.useRef<Member[]>(getStoredTempDataLama());
 
   // Modals & Popups State
   const [verifyingMember, setVerifyingMember] = useState<Member | null>(null);
@@ -87,6 +93,7 @@ export default function App() {
     if (msg.type === 'STATUS_CHANGED' || msg.type === 'NEW_REGISTRATION' || msg.type === 'DATA_SYNC') {
       const refreshedMembers = getStoredMembers();
       setMembers(refreshedMembers);
+      setTempDataMenunggu(getStoredTempDataMenunggu());
       setTempDataLama(getStoredTempDataLama());
 
       // Refresh current session if matches
@@ -135,13 +142,12 @@ export default function App() {
       setCurrentToast(quotaNotif);
     });
 
-    // 1. Initial seed check for Firebase Firestore & IndexedDB hydration
-    seedInitialDataIfEmpty().catch(err => console.warn('Firestore seed note:', err));
+    // 1. Initial sync check for Firebase Firestore & IndexedDB photo hydration
+    seedInitialDataIfEmpty().catch(err => console.warn('Firestore sync note:', err));
     loadMembersFromIndexedDB().then((idbMembers) => {
       if (idbMembers && idbMembers.length > 0) {
         setMembers((prev) => {
-          // If Firestore hasn't provided members yet or current items have missing photos
-          if (!prev || prev.length === 0) return idbMembers;
+          if (!prev || prev.length === 0) return prev;
           return prev.map(m => {
             const match = idbMembers.find(im => im.id === m.id);
             return match ? { ...match, ...m, fotoUrl: m.fotoUrl || match.fotoUrl, ktpUrl: m.ktpUrl || match.ktpUrl, kkUrl: m.kkUrl || match.kkUrl } : m;
@@ -150,42 +156,50 @@ export default function App() {
       }
     }).catch(() => {});
 
-    // 2. Real-time subscription to Firebase Firestore Members (with automatic repair for 0130 Agus Subriyanto & 0131 Sriyono, SH.MM)
-    const unsubMembers = subscribeMembersFirestore((remoteMembers) => {
-      if (remoteMembers && remoteMembers.length > 0) {
-        const { members: verifiedList, changed } = ensureAgusAndSriyonoInMemberList(remoteMembers);
-        setMembers(verifiedList);
-        saveMembers(verifiedList);
+    const applyAuthoritativeReconciliation = () => {
+      const reconciled = reconcileAuthoritativeMembers(
+        latestRemoteMembersRef.current,
+        latestRemoteWaitingRef.current,
+        latestRemoteDeletedRef.current
+      );
+      setMembers(reconciled);
+      saveMembers(reconciled);
 
-        // If live Firestore had 0130 overwritten by Sriyono or missing Agus Subriyanto, heal it in Firestore
-        if (changed) {
-          repairAgusAndSriyonoDataInFirestore(remoteMembers).catch(err =>
-            console.warn('Firestore repair note:', err)
-          );
-        }
-
-        const activeUser = sessionRef.current;
-        if (activeUser) {
-          const freshUser = verifiedList.find(m => m.id === activeUser.id);
-          if (freshUser) {
-            setSessionMember(freshUser);
-            setCurrentUserSession(freshUser);
-          }
+      const activeUser = sessionRef.current;
+      if (activeUser) {
+        const freshUser = reconciled.find(m => m.id === activeUser.id);
+        if (freshUser) {
+          setSessionMember(freshUser);
+          setCurrentUserSession(freshUser);
         }
       }
+    };
+
+    // 2a. Real-time subscription to Firebase Firestore 'members' (Koleksi Anggota Resmi)
+    const unsubMembers = subscribeMembersFirestore((remoteMembers) => {
+      latestRemoteMembersRef.current = remoteMembers || [];
+      applyAuthoritativeReconciliation();
     });
 
-    // 2b. Real-time subscription to Firebase Firestore 'tempdatalama' (Archived Deleted Members)
+    // 2b. Real-time subscription to Firebase Firestore 'tempdatamenunggu' (Tempat Tampung Sementara Menunggu Persetujuan Admin)
+    const unsubTempDataMenunggu = subscribeTempDataMenungguFirestore((remoteWaiting) => {
+      latestRemoteWaitingRef.current = remoteWaiting || [];
+      setTempDataMenunggu(remoteWaiting || []);
+      saveTempDataMenunggu(remoteWaiting || []);
+      applyAuthoritativeReconciliation();
+    });
+
+    // 2c. Real-time subscription to Firebase Firestore 'tempdatalama' (Tempat Tampung Data Terhapus)
     const unsubTempDataLama = subscribeTempDataLamaFirestore((remoteDeleted) => {
-      if (remoteDeleted) {
-        setTempDataLama(remoteDeleted);
-        saveTempDataLama(remoteDeleted);
-      }
+      latestRemoteDeletedRef.current = remoteDeleted || [];
+      setTempDataLama(remoteDeleted || []);
+      saveTempDataLama(remoteDeleted || []);
+      applyAuthoritativeReconciliation();
     });
 
     // 3. Real-time subscription to Firebase Firestore Notifications
     const unsubNotifs = subscribeNotificationsFirestore((remoteNotifs) => {
-      if (remoteNotifs && remoteNotifs.length > 0) {
+      if (remoteNotifs) {
         setNotifications(remoteNotifs);
         saveNotifications(remoteNotifs);
       }
@@ -198,6 +212,7 @@ export default function App() {
       if (e.key?.includes('yayasan_alikhlas')) {
         const refreshed = getStoredMembers();
         setMembers(refreshed);
+        setTempDataMenunggu(getStoredTempDataMenunggu());
         setTempDataLama(getStoredTempDataLama());
         setNotifications(getStoredNotifications());
         setActivities(getStoredActivities());
@@ -210,6 +225,7 @@ export default function App() {
     return () => {
       unsubQuota();
       unsubMembers();
+      unsubTempDataMenunggu();
       unsubTempDataLama();
       unsubNotifs();
       unsubscribeBroadcast();
@@ -492,6 +508,7 @@ export default function App() {
         isAdminLoggedIn ? (
           <AdminDashboard
             members={members}
+            tempDataMenunggu={tempDataMenunggu}
             tempDataLama={tempDataLama}
             activities={activities}
             notifications={notifications}

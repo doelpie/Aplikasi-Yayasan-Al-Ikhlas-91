@@ -13,6 +13,9 @@ import {
   markAllNotificationsAsReadInFirestore,
   allocateUniqueMemberIdFromServer,
   recordAllocatedIdInCounter,
+  saveToTempDataMenungguFirestore,
+  deleteFromTempDataMenungguFirestore,
+  fetchTempDataMenungguFromFirestore,
   saveToTempDataLamaFirestore,
   deleteFromTempDataLamaFirestore,
   fetchTempDataLamaFromFirestore,
@@ -47,6 +50,7 @@ export interface DeepRegistrationLogEntry {
 
 const STORAGE_DEEP_LOGS_KEY = 'yayasan_alikhlas_deep_registration_logs_v1';
 const STORAGE_MEMBERS_KEY = 'yayasan_alikhlas_members_v3';
+const STORAGE_TEMP_DATA_MENUNGGU_KEY = 'yayasan_alikhlas_tempdatamenunggu_v1';
 const STORAGE_TEMP_DATA_LAMA_KEY = 'yayasan_alikhlas_tempdatalama_v1';
 const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
 const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
@@ -182,6 +186,7 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
 // IN-MEMORY & INDEXED-DB HIGH-CAPACITY STORAGE (NO LOCALSTORAGE 5MB LIMIT)
 // =========================================================================
 let inMemoryMembers: Member[] | null = null;
+let inMemoryTempDataMenunggu: Member[] | null = null;
 let inMemoryTempDataLama: Member[] | null = null;
 
 const IDB_NAME = 'YayasanAlIkhlasStore';
@@ -237,6 +242,34 @@ export async function loadMembersFromIndexedDB(): Promise<Member[] | null> {
   }
 }
 
+export async function saveTempDataMenungguToIndexedDB(waitingMembers: Member[]): Promise<void> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return;
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.put(waitingMembers, 'tempdatamenunggu');
+  } catch (err) {
+    console.warn('IndexedDB tempdatamenunggu save notice:', err);
+  }
+}
+
+export async function loadTempDataMenungguFromIndexedDB(): Promise<Member[] | null> {
+  try {
+    const db = await openIndexedDB();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get('tempdatamenunggu');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function saveTempDataLamaToIndexedDB(tempMembers: Member[]): Promise<void> {
   try {
     const db = await openIndexedDB();
@@ -265,26 +298,28 @@ export async function loadTempDataLamaFromIndexedDB(): Promise<Member[] | null> 
   }
 }
 
-// Hydrate in-memory cache from IndexedDB on startup
+// Hydrate in-memory cache from IndexedDB on startup (without ever injecting dummy records)
 if (typeof window !== 'undefined') {
   loadMembersFromIndexedDB().then((idbMembers) => {
-    if (idbMembers && idbMembers.length > 0) {
-      if (!inMemoryMembers || inMemoryMembers.length === 0) {
-        inMemoryMembers = idbMembers;
-      } else {
-        inMemoryMembers = inMemoryMembers.map((m) => {
-          const fromIdb = idbMembers.find((im) => im.id === m.id);
-          if (fromIdb) {
-            return {
-              ...m,
-              fotoUrl: m.fotoUrl || fromIdb.fotoUrl,
-              ktpUrl: m.ktpUrl || fromIdb.ktpUrl,
-              kkUrl: m.kkUrl || fromIdb.kkUrl,
-            };
-          }
-          return m;
-        });
-      }
+    if (idbMembers && idbMembers.length > 0 && inMemoryMembers && inMemoryMembers.length > 0) {
+      inMemoryMembers = inMemoryMembers.map((m) => {
+        const fromIdb = idbMembers.find((im) => im.id === m.id);
+        if (fromIdb) {
+          return {
+            ...m,
+            fotoUrl: m.fotoUrl || fromIdb.fotoUrl,
+            ktpUrl: m.ktpUrl || fromIdb.ktpUrl,
+            kkUrl: m.kkUrl || fromIdb.kkUrl,
+          };
+        }
+        return m;
+      });
+    }
+  }).catch(() => {});
+
+  loadTempDataMenungguFromIndexedDB().then((idbWaiting) => {
+    if (idbWaiting && idbWaiting.length > 0 && (!inMemoryTempDataMenunggu || inMemoryTempDataMenunggu.length === 0)) {
+      inMemoryTempDataMenunggu = idbWaiting;
     }
   }).catch(() => {});
 
@@ -295,17 +330,17 @@ if (typeof window !== 'undefined') {
   }).catch(() => {});
 }
 
-// Strip heavy base64 strings (> 2KB) exclusively for localStorage to stay well below the 5MB browser quota
+// Strip heavy document attachments (KTP/KK > 3KB) for localStorage while keeping profile photos (fotoUrl <= 65KB) for instant 0ms rendering
 function createLightweightMembersForLocalStorage(members: Member[]): Member[] {
   return members.map((m) => {
     const stripped = { ...m };
-    if (stripped.fotoUrl && stripped.fotoUrl.startsWith('data:') && stripped.fotoUrl.length > 2000) {
+    if (stripped.fotoUrl && stripped.fotoUrl.startsWith('data:') && stripped.fotoUrl.length > 65000) {
       stripped.fotoUrl = '';
     }
-    if (stripped.ktpUrl && stripped.ktpUrl.startsWith('data:') && stripped.ktpUrl.length > 2000) {
+    if (stripped.ktpUrl && stripped.ktpUrl.startsWith('data:') && stripped.ktpUrl.length > 3000) {
       stripped.ktpUrl = '';
     }
-    if (stripped.kkUrl && stripped.kkUrl.startsWith('data:') && stripped.kkUrl.length > 2000) {
+    if (stripped.kkUrl && stripped.kkUrl.startsWith('data:') && stripped.kkUrl.length > 3000) {
       stripped.kkUrl = '';
     }
     return stripped;
@@ -313,134 +348,113 @@ function createLightweightMembersForLocalStorage(members: Member[]): Member[] {
 }
 
 /**
- * Ensures locally cached members always contain 0130 (Agus Subriyanto), 0130-2 (Tutik Maryani), and 0131 (Sriyono, SH.MM)
- * and repairs any local cache where 0130 was overwritten by Sriyono.
+ * Menjaga keunikan ID tanpa pernah menyuntikkan data dummy INITIAL_MEMBERS atau memulihkan data terhapus secara otomatis.
  */
 export function ensureAgusAndSriyonoInMemberList(list: Member[]): { members: Member[]; changed: boolean } {
-  let updated = [...list];
+  const byId = new Map<string, Member>();
   let changed = false;
 
-  const canonical0130 = INITIAL_MEMBERS.find(m => m.id === '0130')!;
-  const canonical0130_2 = INITIAL_MEMBERS.find(m => m.id === '0130-2')!;
-  const canonical0131 = INITIAL_MEMBERS.find(m => m.id === '0131')!;
-
-  const idx0130 = updated.findIndex(m => m.id === '0130');
-  const idx0131 = updated.findIndex(m => m.id === '0131');
-
-  // If 0130 currently holds Sriyono, move Sriyono to 0131 and restore Agus Subriyanto to 0130
-  if (idx0130 !== -1 && updated[idx0130].nama.toLowerCase().includes('sriyono')) {
-    const sriyonoFrom0130 = updated[idx0130];
-    const movedSriyono: Member = {
-      ...canonical0131,
-      ...sriyonoFrom0130,
-      id: '0131',
-      nama: sriyonoFrom0130.nama || 'Sriyono, SH.MM',
-      regNumber: sriyonoFrom0130.regNumber
-        ? sriyonoFrom0130.regNumber.replace(/0130/g, '0131')
-        : canonical0131.regNumber,
-      nik: (sriyonoFrom0130.nik && sriyonoFrom0130.nik !== canonical0130.nik)
-        ? sriyonoFrom0130.nik
-        : canonical0131.nik,
-    };
-
-    if (idx0131 !== -1) {
-      updated[idx0131] = movedSriyono;
+  for (const m of list) {
+    if (!m || !m.id) continue;
+    const existing = byId.get(m.id);
+    if (!existing) {
+      byId.set(m.id, m);
     } else {
-      updated.push(movedSriyono);
+      changed = true;
+      // Pertahankan field yang lebih lengkap (terutama fotoUrl, ktpUrl, kkUrl)
+      byId.set(m.id, {
+        ...existing,
+        ...m,
+        fotoUrl: m.fotoUrl || existing.fotoUrl || '',
+        ktpUrl: m.ktpUrl || existing.ktpUrl || '',
+        kkUrl: m.kkUrl || existing.kkUrl || '',
+      });
     }
-
-    const existingTutik = updated.find(m => m.id === '0130-2');
-    updated[idx0130] = {
-      ...canonical0130,
-      noKk: existingTutik?.noKk || canonical0130.noKk,
-      alamat: existingTutik?.alamat || canonical0130.alamat,
-      kkUrl: existingTutik?.kkUrl || canonical0130.kkUrl,
-      kkName: existingTutik?.kkName || canonical0130.kkName,
-    };
-    changed = true;
   }
 
-  // Ensure 0130 (Agus Subriyanto) exists
-  if (!updated.some(m => m.id === '0130')) {
-    const existingTutik = updated.find(m => m.id === '0130-2');
-    updated.push({
-      ...canonical0130,
-      noKk: existingTutik?.noKk || canonical0130.noKk,
-      alamat: existingTutik?.alamat || canonical0130.alamat,
+  return { members: Array.from(byId.values()), changed };
+}
+
+/**
+ * Menggabungkan secara konsisten data dari koleksi 'members' (anggota resmi) dan 'tempdatamenunggu' (pendaftar menunggu persetujuan admin)
+ * sehingga:
+ * 1. Tidak ada data pendaftar berstatus 'menunggu' yang hilang dari halaman Admin.
+ * 2. Data yang sudah dihapus ke 'tempdatalama' tidak pernah muncul kembali tanpa konfirmasi Admin.
+ * 3. Tidak pernah ada data dummy yang tiba-tiba muncul.
+ */
+export function reconcileAuthoritativeMembers(
+  firestoreMembers: Member[],
+  waitingMembers: Member[] = getStoredTempDataMenunggu(),
+  deletedMembers: Member[] = getStoredTempDataLama()
+): Member[] {
+  const previousLocal = inMemoryMembers || [];
+  const mapById = new Map<string, Member>();
+  const activeFirestoreIds = new Set(firestoreMembers.map(m => m.id));
+  const deletedIdsOnlyInArchive = new Set(
+    deletedMembers.map(m => m.id).filter(id => !activeFirestoreIds.has(id))
+  );
+
+  // 1. Masukkan seluruh dokumen resmi dari koleksi 'members' di Firestore
+  for (const m of firestoreMembers) {
+    if (!m || !m.id) continue;
+    const prev = previousLocal.find(p => p.id === m.id);
+    mapById.set(m.id, {
+      ...m,
+      fotoUrl: m.fotoUrl || prev?.fotoUrl || '',
+      ktpUrl: m.ktpUrl || prev?.ktpUrl || '',
+      kkUrl: m.kkUrl || prev?.kkUrl || '',
     });
-    changed = true;
   }
 
-  // Ensure 0130-2 (Tutik Maryani) exists and links to 0130 (Agus Subriyanto)
-  const idxTutik = updated.findIndex(m => m.id === '0130-2');
-  if (idxTutik === -1) {
-    updated.push(canonical0130_2);
-    changed = true;
-  } else if (
-    updated[idxTutik].kepalaKeluargaId !== '0130' ||
-    updated[idxTutik].namaKepalaKeluarga !== 'Agus Subriyanto'
-  ) {
-    updated[idxTutik] = {
-      ...updated[idxTutik],
-      kepalaKeluargaId: '0130',
-      namaKepalaKeluarga: 'Agus Subriyanto',
-    };
-    changed = true;
+  // 2. Pastikan seluruh pendaftar di koleksi 'tempdatamenunggu' selalu masuk sebagai status 'menunggu'
+  // (kecuali sudah disetujui di 'members' atau sudah dihapus ke 'tempdatalama')
+  for (const w of waitingMembers) {
+    if (!w || !w.id) continue;
+    if (deletedIdsOnlyInArchive.has(w.id)) continue;
+
+    const existingInMembers = mapById.get(w.id);
+    if (!existingInMembers) {
+      const prev = previousLocal.find(p => p.id === w.id);
+      mapById.set(w.id, {
+        ...w,
+        status: w.status || 'menunggu',
+        fotoUrl: w.fotoUrl || prev?.fotoUrl || '',
+        ktpUrl: w.ktpUrl || prev?.ktpUrl || '',
+        kkUrl: w.kkUrl || prev?.kkUrl || '',
+      });
+    } else {
+      // Lengkapi foto/lampiran jika di tempdatamenunggu lebih lengkap
+      mapById.set(w.id, {
+        ...w,
+        ...existingInMembers,
+        fotoUrl: existingInMembers.fotoUrl || w.fotoUrl || '',
+        ktpUrl: existingInMembers.ktpUrl || w.ktpUrl || '',
+        kkUrl: existingInMembers.kkUrl || w.kkUrl || '',
+      });
+    }
   }
 
-  // Ensure 0131 (Sriyono, SH.MM) exists
-  if (!updated.some(m => m.id === '0131')) {
-    updated.push(canonical0131);
-    changed = true;
-  }
-
-  return { members: updated, changed };
+  return Array.from(mapById.values());
 }
 
 export function getStoredMembers(): Member[] {
-  if (inMemoryMembers && inMemoryMembers.length > 0) {
-    const { members: checked, changed } = ensureAgusAndSriyonoInMemberList(inMemoryMembers);
-    if (changed) {
-      inMemoryMembers = checked;
-    }
+  if (inMemoryMembers) {
     return inMemoryMembers;
   }
-  if (typeof window === 'undefined') return INITIAL_MEMBERS;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_MEMBERS_KEY);
     if (!raw) {
-      inMemoryMembers = INITIAL_MEMBERS;
-      saveMembers(INITIAL_MEMBERS);
-      return INITIAL_MEMBERS;
+      inMemoryMembers = [];
+      return [];
     }
     const parsed: Member[] = JSON.parse(raw);
-    
-    let needsUpdate = false;
-    const migrated = parsed.map(m => {
-      if (!m.fotoUrl || m.fotoUrl.includes('unsplash')) {
-        needsUpdate = true;
-        if (m.peranKeluarga === 'istri') {
-          return { ...m, fotoUrl: SYARI_PHOTOS.istriSitiAminah };
-        } else if (m.peranKeluarga === 'anak') {
-          return { ...m, fotoUrl: SYARI_PHOTOS.anakRizky10Thn };
-        } else {
-          return { ...m, fotoUrl: SYARI_PHOTOS.kepalaKeluargaMargo };
-        }
-      }
-      return m;
-    });
-
-    const { members: repaired, changed } = ensureAgusAndSriyonoInMemberList(migrated);
-    inMemoryMembers = repaired;
-
-    if (needsUpdate || changed) {
-      saveMembers(repaired);
-    }
-
-    return repaired;
+    const { members: deduped } = ensureAgusAndSriyonoInMemberList(parsed);
+    inMemoryMembers = deduped;
+    return deduped;
   } catch (e) {
     console.warn('Error reading members from localStorage:', e);
-    return inMemoryMembers || INITIAL_MEMBERS;
+    return inMemoryMembers || [];
   }
 }
 
@@ -452,7 +466,9 @@ export function saveMembers(members: Member[]): void {
   saveMembersToIndexedDB(members).catch(() => {});
 
   try {
-    localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
+    // Store lightweight version (with profile photos intact, stripping only heavy KTP/KK attachments) for super-fast localStorage access
+    const fastLocalList = createLightweightMembersForLocalStorage(members);
+    localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(fastLocalList));
   } catch (e: any) {
     const isQuota = e?.name === 'QuotaExceededError' || e?.message?.includes('exceeded the quota') || e?.code === 22;
     if (isQuota) {
@@ -462,19 +478,51 @@ export function saveMembers(members: Member[]): void {
       } catch {}
 
       try {
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(members));
-        return;
-      } catch {}
-
-      try {
-        const lightweight = createLightweightMembersForLocalStorage(members);
-        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(lightweight));
+        const ultraLight = members.map(m => ({
+          ...m,
+          fotoUrl: m.fotoUrl && m.fotoUrl.startsWith('data:') && m.fotoUrl.length > 15000 ? '' : m.fotoUrl,
+          ktpUrl: '',
+          kkUrl: '',
+        }));
+        localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(ultraLight));
       } catch (err2) {
         console.warn('LocalStorage fallback note:', err2);
       }
     } else {
       console.warn('Error saving members to localStorage:', e);
     }
+  }
+}
+
+// =========================================================================
+// PENYIMPANAN LOKAL & SINKRONISASI KOLEKSI 'tempdatamenunggu' (MENUNGGU PERSETUJUAN ADMIN)
+// =========================================================================
+export function getStoredTempDataMenunggu(): Member[] {
+  if (inMemoryTempDataMenunggu) {
+    return inMemoryTempDataMenunggu;
+  }
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_TEMP_DATA_MENUNGGU_KEY);
+    const parsed: Member[] = raw ? JSON.parse(raw) : [];
+    inMemoryTempDataMenunggu = parsed;
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveTempDataMenunggu(waitingMembers: Member[]): void {
+  inMemoryTempDataMenunggu = waitingMembers;
+  if (typeof window === 'undefined') return;
+
+  saveTempDataMenungguToIndexedDB(waitingMembers).catch(() => {});
+
+  try {
+    const lightweight = createLightweightMembersForLocalStorage(waitingMembers);
+    localStorage.setItem(STORAGE_TEMP_DATA_MENUNGGU_KEY, JSON.stringify(lightweight));
+  } catch (err) {
+    console.warn('TempDataMenunggu localStorage note:', err);
   }
 }
 
@@ -516,8 +564,8 @@ export interface NikCheckResult {
 }
 
 /**
- * Memeriksa keunikan Nomor KTP / KIA (NIK) di koleksi aktif `members` dan koleksi arsip `tempdatalama`.
- * - Jika NIK sudah terdaftar di `members`: kembalikan `exists_in_members`.
+ * Memeriksa keunikan Nomor KTP / KIA (NIK) di koleksi aktif `members`, koleksi tunggu `tempdatamenunggu`, dan koleksi arsip `tempdatalama`.
+ * - Jika NIK sudah terdaftar di `members` atau `tempdatamenunggu`: kembalikan `exists_in_members`.
  * - Jika NIK pernah terdaftar lalu terhapus (ada di `tempdatalama`): kembalikan `exists_in_tempdatalama` beserta datanya.
  */
 export async function checkNikAvailability(
@@ -527,26 +575,43 @@ export async function checkNikAvailability(
   const cleanNik = (nik || '').trim().replace(/\D/g, '');
   if (!cleanNik) return { status: 'available' };
 
-  // 1. Cek di cache lokal members
+  // 1. Cek di cache lokal members & tempdatamenunggu
   const localMembers = getStoredMembers();
   const foundLocalActive = localMembers.find(
-    m => m.nik.replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
+    m => (m.nik || '').replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
   );
   if (foundLocalActive) {
     return { status: 'exists_in_members', member: foundLocalActive };
   }
 
-  // 2. Cek di server Firestore members untuk kepastian lintas perangkat
+  const localWaiting = getStoredTempDataMenunggu();
+  const foundLocalWaiting = localWaiting.find(
+    m => (m.nik || '').replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
+  );
+  if (foundLocalWaiting) {
+    return { status: 'exists_in_members', member: foundLocalWaiting };
+  }
+
+  // 2. Cek di server Firestore 'members' & 'tempdatamenunggu' untuk kepastian lintas perangkat
   try {
-    const remoteMembers = await fetchMembersFromFirestore();
+    const [remoteMembers, remoteWaiting] = await Promise.all([
+      fetchMembersFromFirestore(),
+      fetchTempDataMenungguFromFirestore(),
+    ]);
     const foundRemoteActive = remoteMembers.find(
       m => (m.nik || '').replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
     );
     if (foundRemoteActive) {
       return { status: 'exists_in_members', member: foundRemoteActive };
     }
+    const foundRemoteWaiting = remoteWaiting.find(
+      m => (m.nik || '').replace(/\D/g, '') === cleanNik && m.id !== excludeMemberId
+    );
+    if (foundRemoteWaiting) {
+      return { status: 'exists_in_members', member: foundRemoteWaiting };
+    }
   } catch (err) {
-    console.warn('Note checking remote members for NIK:', err);
+    console.warn('Note checking remote members/tempdatamenunggu for NIK:', err);
   }
 
   // 3. Cek di koleksi tempdatalama (lokal & Firestore) apakah data pernah terdaftar lalu terhapus
@@ -582,30 +647,64 @@ export async function restoreMemberFromTempDataLamaAsync(
   onStatusUpdate?: (status: string) => void
 ): Promise<Member> {
   const traceId = 'RESTORE-' + Date.now().toString(36).toUpperCase();
-  onStatusUpdate?.(`Memulihkan data "${deletedMember.nama}" dari tabel tempdatalama ke koleksi members...`);
+  onStatusUpdate?.(`Memulihkan seluruh field data "${deletedMember.nama}" dari tabel tempdatalama ke koleksi members...`);
 
   const activeMembers = getStoredMembers();
   const tempMembers = getStoredTempDataLama();
 
-  // Gunakan ID asli jika belum terpakai di members aktif, atau alokasikan ID unik baru jika ID lama sudah terpakai
-  let targetId = deletedMember.id;
+  // Pastikan seluruh field (termasuk fotoUrl, ktpUrl, kkUrl) diambil utuh dari IndexedDB / Firestore tempdatalama
+  let enrichedDeleted = { ...deletedMember };
+  try {
+    const idbTemp = await loadTempDataLamaFromIndexedDB();
+    const matchIdb = idbTemp?.find(m => m.id === deletedMember.id || m.nik === deletedMember.nik);
+    if (matchIdb) {
+      enrichedDeleted = {
+        ...matchIdb,
+        ...enrichedDeleted,
+        fotoUrl: enrichedDeleted.fotoUrl || matchIdb.fotoUrl || '',
+        ktpUrl: enrichedDeleted.ktpUrl || matchIdb.ktpUrl || '',
+        kkUrl: enrichedDeleted.kkUrl || matchIdb.kkUrl || '',
+      };
+    }
+  } catch {}
+
+  // Gunakan ID asli jika belum terpakai oleh orang lain di members aktif, atau alokasikan ID unik baru jika sudah terpakai
+  let targetId = enrichedDeleted.id;
   const idOccupiedByOther = activeMembers.some(
-    m => m.id === targetId && m.nik.replace(/\D/g, '') !== deletedMember.nik.replace(/\D/g, '')
+    m => m.id === targetId && (m.nik || '').replace(/\D/g, '') !== (enrichedDeleted.nik || '').replace(/\D/g, '')
   );
   if (!targetId || idOccupiedByOther) {
     targetId = await allocateUniqueMemberIdFromServer(
-      deletedMember.kepalaKeluargaId,
+      enrichedDeleted.kepalaKeluargaId,
       activeMembers,
       tempMembers
     );
   }
 
   const restoredMember: Member = {
-    ...deletedMember,
-    ...(overrides || {}),
     id: targetId,
-    status: overrides?.status || deletedMember.status || 'disetujui',
-    tanggalDaftar: deletedMember.tanggalDaftar || new Date().toISOString(),
+    regNumber: overrides?.regNumber ?? enrichedDeleted.regNumber ?? '',
+    nik: overrides?.nik ?? enrichedDeleted.nik ?? '',
+    nama: overrides?.nama ?? enrichedDeleted.nama ?? '',
+    tempatTanggalLahir: overrides?.tempatTanggalLahir ?? enrichedDeleted.tempatTanggalLahir ?? '',
+    alamat: overrides?.alamat ?? enrichedDeleted.alamat ?? '',
+    noHp: overrides?.noHp ?? enrichedDeleted.noHp ?? '',
+    noKk: overrides?.noKk ?? enrichedDeleted.noKk ?? '',
+    peranKeluarga: overrides?.peranKeluarga ?? enrichedDeleted.peranKeluarga ?? 'kepala_keluarga',
+    kepalaKeluargaId: overrides?.kepalaKeluargaId ?? enrichedDeleted.kepalaKeluargaId,
+    namaKepalaKeluarga: overrides?.namaKepalaKeluarga ?? enrichedDeleted.namaKepalaKeluarga,
+    jumlahKeluarga: overrides?.jumlahKeluarga ?? enrichedDeleted.jumlahKeluarga ?? (enrichedDeleted.peranKeluarga === 'kepala_keluarga' ? 1 : 0),
+    email: overrides?.email ?? enrichedDeleted.email ?? '',
+    fotoUrl: overrides?.fotoUrl ?? enrichedDeleted.fotoUrl ?? '',
+    fotoName: overrides?.fotoName ?? enrichedDeleted.fotoName ?? '',
+    ktpUrl: overrides?.ktpUrl ?? enrichedDeleted.ktpUrl ?? '',
+    ktpName: overrides?.ktpName ?? enrichedDeleted.ktpName ?? '',
+    kkUrl: overrides?.kkUrl ?? enrichedDeleted.kkUrl ?? '',
+    kkName: overrides?.kkName ?? enrichedDeleted.kkName ?? '',
+    status: overrides?.status || enrichedDeleted.status || 'disetujui',
+    catatanPenolakan: overrides?.catatanPenolakan ?? enrichedDeleted.catatanPenolakan,
+    tanggalDaftar: enrichedDeleted.tanggalDaftar || new Date().toISOString(),
+    tanggalDisetujui: enrichedDeleted.tanggalDisetujui || ( (overrides?.status || enrichedDeleted.status) === 'disetujui' ? new Date().toISOString() : undefined ),
   };
   delete (restoredMember as any).deletedAt;
   delete (restoredMember as any).deletedReason;
@@ -627,7 +726,7 @@ export async function restoreMemberFromTempDataLamaAsync(
   }
 
   const updatedTemp = tempMembers.filter(
-    m => m.id !== deletedMember.id && m.nik.replace(/\D/g, '') !== deletedMember.nik.replace(/\D/g, '')
+    m => m.id !== deletedMember.id && (m.nik || '').replace(/\D/g, '') !== (deletedMember.nik || '').replace(/\D/g, '')
   );
   saveTempDataLama(updatedTemp);
 
@@ -907,6 +1006,19 @@ export async function updateMemberStatusAsync(
     traceId,
     { preventOverwrite: false }
   );
+
+  // LANGKAH 1b: Sinkronkan tempat tampung sementara 'tempdatamenunggu'
+  // Jika sudah disetujui atau ditolak oleh Admin, hapus dari tempat tampung 'tempdatamenunggu' karena sudah resmi diproses di 'members'.
+  // Jika status dikembalikan ke 'menunggu', simpan kembali ke 'tempdatamenunggu'.
+  if (newStatus === 'menunggu') {
+    await saveToTempDataMenungguFirestore(updatedMember);
+    const currentWaiting = getStoredTempDataMenunggu();
+    saveTempDataMenunggu([updatedMember, ...currentWaiting.filter(w => w.id !== memberId)]);
+  } else {
+    await deleteFromTempDataMenungguFirestore(memberId);
+    const currentWaiting = getStoredTempDataMenunggu();
+    saveTempDataMenunggu(currentWaiting.filter(w => w.id !== memberId));
+  }
 
   // LANGKAH 2: Pastikan muncul di halaman Daftar Anggota & Admin
   const latestMembers = getStoredMembers();
@@ -1319,12 +1431,24 @@ export async function addNewMemberAsync(
     );
 
     // -------------------------------------------------------------
+    // LANGKAH 6b: PENYIMPANAN KE TEMPAT TAMPUNG SEMENTARA MENUNGGU PERSETUJUAN ADMIN ('tempdatamenunggu')
+    // Jika pendaftaran berstatus 'menunggu', simpan juga ke koleksi khusus 'tempdatamenunggu'
+    // agar data pendaftar 100% aman di tempat tampung tunggu dan selalu tampil di tab Menunggu Admin.
+    // -------------------------------------------------------------
+    if (newMember.status === 'menunggu') {
+      onStatusUpdate?.('Menyimpan data ke tempat tampung sementara menunggu persetujuan admin ("tempdatamenunggu")...');
+      await saveToTempDataMenungguFirestore(newMember);
+      const currentWaiting = getStoredTempDataMenunggu();
+      saveTempDataMenunggu([newMember, ...currentWaiting.filter(w => w.id !== newMember.id)]);
+    }
+
+    // -------------------------------------------------------------
     // LANGKAH 7: KONFIRMASI PENULISAN DATA BERHASIL & MASUK DAFTAR TUNGGU ADMIN
     // -------------------------------------------------------------
     logDeep(
       'KONFIRMASI_BERHASIL',
       'Konfirmasi Penulisan Data Berhasil 100%',
-      `Integritas dokumen terverifikasi utuh di Firestore: ${newMember.nama} (ID: ${newMember.id}, Status: ${newMember.status})`,
+      `Integritas dokumen terverifikasi utuh di Firestore (members${newMember.status === 'menunggu' ? ' & tempdatamenunggu' : ''}): ${newMember.nama} (ID: ${newMember.id}, Status: ${newMember.status})`,
       'SUCCESS',
       0,
       { memberId: newMember.id, nama: newMember.nama, status: newMember.status }
@@ -1533,6 +1657,15 @@ export async function updateMemberAsync(updatedMember: Member): Promise<Member> 
 
   try {
     await saveMemberWithRetryAndConfirmation(finalMember, 4, undefined, 'UPD-' + finalMember.id);
+    if (finalMember.status === 'menunggu') {
+      await saveToTempDataMenungguFirestore(finalMember);
+      const curW = getStoredTempDataMenunggu();
+      saveTempDataMenunggu([finalMember, ...curW.filter(w => w.id !== finalMember.id)]);
+    } else {
+      await deleteFromTempDataMenungguFirestore(finalMember.id);
+      const curW = getStoredTempDataMenunggu();
+      saveTempDataMenunggu(curW.filter(w => w.id !== finalMember.id));
+    }
   } catch (err: any) {
     if (isFirestoreQuotaError(err)) {
       notifyQuotaLimitExceeded(err?.message || String(err));
@@ -1593,16 +1726,52 @@ export function updateMember(updatedMember: Member): void {
  */
 export async function deleteMemberAsync(id: string, reason?: string): Promise<void> {
   const members = getStoredMembers();
-  const target = members.find(m => m.id === id);
+  let target = members.find(m => m.id === id);
 
   if (target) {
+    try {
+      const idbMembers = await loadMembersFromIndexedDB();
+      const idbMatch = idbMembers?.find(m => m.id === id);
+      if (idbMatch) {
+        target = {
+          ...idbMatch,
+          ...target,
+          fotoUrl: target.fotoUrl || idbMatch.fotoUrl || '',
+          ktpUrl: target.ktpUrl || idbMatch.ktpUrl || '',
+          kkUrl: target.kkUrl || idbMatch.kkUrl || '',
+        };
+      }
+    } catch {}
+
     const archivedMember: Member = {
-      ...target,
+      id: target.id,
+      regNumber: target.regNumber || '',
+      nik: target.nik || '',
+      nama: target.nama || '',
+      tempatTanggalLahir: target.tempatTanggalLahir || '',
+      alamat: target.alamat || '',
+      noHp: target.noHp || '',
+      noKk: target.noKk || '',
+      peranKeluarga: target.peranKeluarga || 'kepala_keluarga',
+      kepalaKeluargaId: target.kepalaKeluargaId || '',
+      namaKepalaKeluarga: target.namaKepalaKeluarga || '',
+      jumlahKeluarga: typeof target.jumlahKeluarga === 'number' ? target.jumlahKeluarga : (target.peranKeluarga === 'kepala_keluarga' ? 1 : 0),
+      email: target.email || '',
+      fotoUrl: target.fotoUrl || '',
+      fotoName: target.fotoName || '',
+      ktpUrl: target.ktpUrl || '',
+      ktpName: target.ktpName || '',
+      kkUrl: target.kkUrl || '',
+      kkName: target.kkName || '',
+      status: target.status || 'disetujui',
+      catatanPenolakan: target.catatanPenolakan || '',
+      tanggalDaftar: target.tanggalDaftar || new Date().toISOString(),
+      tanggalDisetujui: target.tanggalDisetujui || '',
       deletedAt: new Date().toISOString(),
-      deletedReason: reason || 'Dihapus oleh Admin (Tersimpan di tempdatalama)',
+      deletedReason: reason || 'Dihapus oleh Admin (Tersimpan lengkap di tempdatalama)',
     };
 
-    // 1. Simpan ke koleksi 'tempdatalama' di Firestore & lokal
+    // 1. Simpan ke koleksi 'tempdatalama' di Firestore & lokal beserta semua field lengkapnya
     const currentTemp = getStoredTempDataLama();
     const updatedTemp = [
       archivedMember,
@@ -1616,16 +1785,22 @@ export async function deleteMemberAsync(id: string, reason?: string): Promise<vo
       console.warn('Firestore saveToTempDataLama note:', err);
     }
   } else {
-    // Tetap pastikan ID tercatat sebagai sudah pernah digunakan
+    // Tetap pastikan ID tercatat sebagai sudah pernah digunakan agar tidak dipakai ulang
     await recordAllocatedIdInCounter(id);
   }
 
-  // 2. Hapus dari koleksi aktif 'members'
+  // 2. Hapus dari koleksi aktif 'members' dan tempat tampung tunggu 'tempdatamenunggu'
   const filtered = members.filter(m => m.id !== id);
   saveMembers(filtered);
 
+  const currentWaiting = getStoredTempDataMenunggu();
+  saveTempDataMenunggu(currentWaiting.filter(w => w.id !== id));
+
   try {
-    await deleteMemberFromFirestore(id);
+    await Promise.all([
+      deleteMemberFromFirestore(id),
+      deleteFromTempDataMenungguFirestore(id),
+    ]);
   } catch (err) {
     console.warn('Firestore delete member note:', err);
   }
@@ -1638,14 +1813,8 @@ export function deleteMember(id: string): void {
 }
 
 export function resetToInitialData(): void {
-  saveMembers(INITIAL_MEMBERS);
-  saveNotifications([]);
-  setCurrentUserSession(null);
-
-  INITIAL_MEMBERS.forEach(m => {
-    saveMemberToFirestore(m).catch(console.warn);
-  });
-
+  // Jangan pernah menyuntikkan kembali INITIAL_MEMBERS (data dummy) ke Firestore!
+  // Cukup muat ulang data murni dari server Firestore agar konsisten.
   if (typeof window !== 'undefined') {
     window.location.reload();
   }

@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Member } from '../types';
-import { getInitials, getPeranLabel, maskNik, maskKk } from '../utils/storage';
-import { Search, CreditCard, ChevronDown, Users, Sparkles, User } from 'lucide-react';
+import { getPeranLabel, maskNik, maskKk } from '../utils/storage';
+import { Search, CreditCard, ChevronDown, Users, Sparkles } from 'lucide-react';
+import { FastMemberAvatar } from './FastMemberAvatar';
 
 interface MemberListProps {
   members: Member[];
@@ -115,20 +116,13 @@ export const MemberList: React.FC<MemberListProps> = ({
                 key={member.id}
                 className="bg-white rounded-2xl p-3.5 sm:p-5 shadow-xs hover:shadow-md border border-gray-100 flex items-start gap-3 sm:gap-3.5 transition-all"
               >
-                {/* Photo Portrait / Initial Avatar */}
-                <div className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl overflow-hidden bg-emerald-50 border-2 border-[#0b5d34] flex items-center justify-center shrink-0 shadow-xs relative">
-                  {member.fotoUrl ? (
-                    <img
-                      src={member.fotoUrl}
-                      alt={member.nama}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-[#0b5d34] text-white flex items-center justify-center font-bold text-base sm:text-lg">
-                      {getInitials(member.nama)}
-                    </div>
-                  )}
-                </div>
+                {/* Fast Photo Portrait / Initial Avatar */}
+                <FastMemberAvatar
+                  src={member.fotoUrl}
+                  name={member.nama}
+                  className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl"
+                  initialsClassName="text-base sm:text-lg"
+                />
 
                 {/* Member Info */}
                 <div className="flex-1 min-w-0">
