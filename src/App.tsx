@@ -33,6 +33,7 @@ import {
   loadMembersFromIndexedDB
 } from './utils/storage';
 import { soundEffects } from './utils/sound';
+import { runAutoRepairProcess } from './utils/systemLogger';
 import { Header } from './components/Header';
 import { MemberList } from './components/MemberList';
 import { VerifyCardModal } from './components/VerifyCardModal';
@@ -195,6 +196,24 @@ export default function App() {
       );
       setActivities(unifiedActivities);
     };
+
+    // Immediate startup auto-repair & cross-device schedule reconciliation
+    reconcileAuthoritativeActivities()
+      .then(({ activities: unified }) => {
+        latestRemoteActivitiesRef.current = unified;
+        setActivities(unified);
+      })
+      .catch(err => console.warn('Initial activity reconciliation note:', err));
+
+    runAutoRepairProcess(getStoredMembers(), getStoredTempDataLama())
+      .then((res) => {
+        if (res.syncedActivities && res.syncedActivities.length > 0) {
+          latestRemoteActivitiesRef.current = res.syncedActivities;
+          setActivities(res.syncedActivities);
+        }
+        setMembers(getStoredMembers());
+      })
+      .catch(err => console.warn('Initial auto-repair note:', err));
 
     // 2a. Real-time subscription to Firebase Firestore 'members' (Koleksi Anggota Resmi)
     const unsubMembers = subscribeMembersFirestore((remoteMembers) => {

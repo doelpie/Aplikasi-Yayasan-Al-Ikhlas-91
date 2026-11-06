@@ -2211,11 +2211,20 @@ export async function reconcileAuthoritativeActivities(
     mergedById.set(rAct.id, rAct);
   }
 
-  // 2. Periksa kegiatan yang ada di perangkat lokal (atau INITIAL_ACTIVITIES jika belum pernah disinkronkan)
-  const candidateLocalList =
-    firestoreActs.length === 0 && localActs.length === 0 ? INITIAL_ACTIVITIES : localActs;
+  // 2. Gabungkan INITIAL_ACTIVITIES (jadwal dasar yayasan yang belum dihapus) + jadwal lokal di perangkat ini
+  const combinedCandidateList: Activity[] = [...localActs];
+  for (const initAct of INITIAL_ACTIVITIES) {
+    const alreadyInLocal = combinedCandidateList.some(
+      l =>
+        l.id === initAct.id ||
+        (l.judul.toLowerCase().trim() === initAct.judul.toLowerCase().trim() && l.tanggal === initAct.tanggal)
+    );
+    if (!alreadyInLocal) {
+      combinedCandidateList.push(initAct);
+    }
+  }
 
-  for (const lAct of candidateLocalList) {
+  for (const lAct of combinedCandidateList) {
     if (!lAct || !lAct.id) continue;
     const sig = `${(lAct.judul || '').toLowerCase().trim()}__${lAct.tanggal}`;
 
