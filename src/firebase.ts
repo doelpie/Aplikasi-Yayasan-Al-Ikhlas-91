@@ -13,7 +13,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import rawConfig from '../firebase-applet-config.json';
-import { Member, AppNotification, SystemLogEntry, TempDataSebelumDaftar } from './types';
+import { Member, AppNotification, SystemLogEntry, TempDataSebelumDaftar, Activity, TempKegiatanSebelumSimpan } from './types';
 import { INITIAL_MEMBERS, SYARI_PHOTOS } from './data/initialData';
 
 // Support VITE_ environment variables (safe for git/production) with local fallback
@@ -41,6 +41,9 @@ export const MEMBERS_COLLECTION = 'members';
 export const TEMP_DATA_MENUNGGU_COLLECTION = 'tempdatamenunggu';
 export const TEMP_DATA_LAMA_COLLECTION = 'tempdatalama';
 export const TEMP_DATA_SEBELUM_DAFTAR_COLLECTION = 'tempdatasebelumdaftar';
+export const ACTIVITIES_COLLECTION = 'activities';
+export const TEMP_KEGIATAN_LAMA_COLLECTION = 'tempkegiatanlama';
+export const TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION = 'tempkegiatansebelumsimpan';
 export const SYSTEM_COUNTERS_COLLECTION = 'system_counters';
 export const NOTIFICATIONS_COLLECTION = 'notifications';
 export const SYSTEM_LOGS_COLLECTION = 'system_logs';
@@ -1310,4 +1313,391 @@ export async function clearSystemLogsInFirestore(): Promise<void> {
     console.warn('Error clearing system logs in Firestore:', err);
   }
 }
+
+// =========================================================================
+// MANAJEMEN JADWAL & PRESENSI KEGIATAN FIRESTORE (activities, tempkegiatanlama, tempkegiatansebelumsimpan)
+// =========================================================================
+
+export function parseActivityNumber(id?: string): number {
+  if (!id) return 0;
+  const match = id.match(/ACT-\d{4}-(\d+)/i);
+  if (match && match[1]) {
+    const n = parseInt(match[1], 10);
+    return isNaN(n) ? 0 : n;
+  }
+  const tail = id.split('-').pop() || '';
+  const n2 = parseInt(tail, 10);
+  return isNaN(n2) ? 0 : n2;
+}
+
+export function buildCompleteActivityRecord(act: Activity, isDeletedArchive: boolean = false): Activity {
+  const nowIso = new Date().toISOString();
+  const cleanKehadiran = Array.isArray(act.kehadiran)
+    ? act.kehadiran.map(k => ({
+        memberId: k.memberId || '',
+        memberNama: k.memberNama || '',
+        memberNik: k.memberNik || '',
+        memberPeran: k.memberPeran || 'kepala_keluarga',
+        // Hindari base64 besar di dalam array kehadiran agar dokumen Activity selalu ringan & cepat tersinkron di semua HP/Laptop
+        memberFotoUrl: k.memberFotoUrl && k.memberFotoUrl.startsWith('data:') && k.memberFotoUrl.length > 5000 ? '' : (k.memberFotoUrl || ''),
+        scanTimestamp: k.scanTimestamp || nowIso,
+        scanTimeFormatted: k.scanTimeFormatted || '',
+        activityId: k.activityId || act.id,
+        activityTitle: k.activityTitle || act.judul,
+        activityType: k.activityType || act.jenis,
+      }))
+    : [];
+
+  const full: Activity = {
+    id: act.id,
+    judul: act.judul || 'Kegiatan Yayasan Al Ikhlas',
+    jenis: act.jenis || 'pengajian_umum',
+    tanggal: act.tanggal || nowIso.slice(0, 10),
+    jamMulai: act.jamMulai || '19:30',
+    jamSelesai: act.jamSelesai || '21:30',
+    lokasi: act.lokasi || 'Gedung Yayasan Al Ikhlas Sembilan Satu Dalung',
+    deskripsi: act.deskripsi || '',
+    pesertaIds: Array.isArray(act.pesertaIds) ? Array.from(new Set(act.pesertaIds)) : [],
+    kehadiran: cleanKehadiran,
+    createdAt: act.createdAt || nowIso,
+    updatedAt: act.updatedAt || nowIso,
+  };
+
+  if (isDeletedArchive) {
+    full.deletedAt = act.deletedAt || nowIso;
+    full.deletedReason = act.deletedReason || 'Agenda dihapus oleh Admin (Tersimpan di tempkegiatanlama)';
+  }
+
+  return full;
+}
+
+export async function recordAllocatedActivityIdInCounter(allocatedId: string, seqNum?: number): Promise<void> {
+  try {
+    const counterRef = doc(db, SYSTEM_COUNTERS_COLLECTION, 'activity_id_seq');
+    let currentLastNum = 3;
+    let usedIds: string[] = [];
+
+    try {
+      const snap = await getDocFromServer(counterRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (typeof data.lastRootNumber === 'number' && data.lastRootNumber > currentLastNum) {
+          currentLastNum = data.lastRootNumber;
+        }
+        if (Array.isArray(data.usedIds)) {
+          usedIds = data.usedIds;
+        }
+      }
+    } catch {}
+
+    const parsedNum = seqNum ?? parseActivityNumber(allocatedId);
+    const updatedLastNum = !isNaN(parsedNum) && parsedNum > currentLastNum ? parsedNum : currentLastNum;
+    const updatedUsedIds = Array.from(new Set([...usedIds, allocatedId])).slice(-1000);
+
+    await setDoc(
+      counterRef,
+      {
+        lastRootNumber: updatedLastNum,
+        usedIds: updatedUsedIds,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[ACTIVITY_ID_COUNTER] Note recording allocated activity ID:', err);
+  }
+}
+
+export async function allocateUniqueActivityIdFromServer(
+  localActivities: Activity[] = [],
+  localDeletedActivities: Activity[] = []
+): Promise<string> {
+  const usedIds = new Set<string>();
+  let maxSeqNum = 3;
+
+  const registerActId = (id?: string) => {
+    if (!id) return;
+    const trimmed = id.trim();
+    if (!trimmed) return;
+    usedIds.add(trimmed);
+    const num = parseActivityNumber(trimmed);
+    if (num > maxSeqNum) {
+      maxSeqNum = num;
+    }
+  };
+
+  localActivities.forEach(a => registerActId(a.id));
+  localDeletedActivities.forEach(a => registerActId(a.id));
+
+  try {
+    const actSnap = await getDocs(collection(db, ACTIVITIES_COLLECTION));
+    actSnap.forEach(d => {
+      registerActId(d.id);
+      const data = d.data();
+      if (data?.id) registerActId(data.id);
+    });
+  } catch (err) {
+    console.warn('[ACTIVITY_ID_ALLOCATOR] Note reading activities:', err);
+  }
+
+  try {
+    const delSnap = await getDocs(collection(db, TEMP_KEGIATAN_LAMA_COLLECTION));
+    delSnap.forEach(d => {
+      registerActId(d.id);
+      const data = d.data();
+      if (data?.id) registerActId(data.id);
+    });
+  } catch (err) {
+    console.warn('[ACTIVITY_ID_ALLOCATOR] Note reading tempkegiatanlama:', err);
+  }
+
+  try {
+    const counterSnap = await getDocFromServer(doc(db, SYSTEM_COUNTERS_COLLECTION, 'activity_id_seq'));
+    if (counterSnap.exists()) {
+      const cData = counterSnap.data();
+      if (typeof cData.lastRootNumber === 'number' && cData.lastRootNumber > maxSeqNum) {
+        maxSeqNum = cData.lastRootNumber;
+      }
+      if (Array.isArray(cData.usedIds)) {
+        cData.usedIds.forEach((uid: string) => registerActId(uid));
+      }
+    }
+  } catch {}
+
+  let nextNum = maxSeqNum + 1;
+  let candidateId = `ACT-2026-${String(nextNum).padStart(3, '0')}`;
+  while (usedIds.has(candidateId)) {
+    nextNum++;
+    candidateId = `ACT-2026-${String(nextNum).padStart(3, '0')}`;
+  }
+
+  for (let check = 0; check < 10; check++) {
+    try {
+      const [aSnap, dSnap] = await Promise.all([
+        getDocFromServer(doc(db, ACTIVITIES_COLLECTION, candidateId)),
+        getDocFromServer(doc(db, TEMP_KEGIATAN_LAMA_COLLECTION, candidateId)),
+      ]);
+      if (!aSnap.exists() && !dSnap.exists()) {
+        break;
+      }
+      nextNum++;
+      candidateId = `ACT-2026-${String(nextNum).padStart(3, '0')}`;
+    } catch {
+      break;
+    }
+  }
+
+  await recordAllocatedActivityIdInCounter(candidateId, nextNum);
+  return candidateId;
+}
+
+export async function saveActivityToFirestore(activity: Activity): Promise<void> {
+  const path = `${ACTIVITIES_COLLECTION}/${activity.id}`;
+  try {
+    const payload = buildCompleteActivityRecord(activity, false);
+    await setDoc(doc(db, ACTIVITIES_COLLECTION, activity.id), cleanForFirestore(payload));
+    await recordAllocatedActivityIdInCounter(activity.id);
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteActivityFromFirestore(activityId: string): Promise<void> {
+  const path = `${ACTIVITIES_COLLECTION}/${activityId}`;
+  try {
+    await deleteDoc(doc(db, ACTIVITIES_COLLECTION, activityId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function fetchActivitiesFromFirestore(): Promise<Activity[]> {
+  try {
+    const snap = await getDocs(collection(db, ACTIVITIES_COLLECTION));
+    const list: Activity[] = [];
+    snap.forEach(d => {
+      list.push(buildCompleteActivityRecord(d.data() as Activity, false));
+    });
+    list.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+    return list;
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('Error fetching activities from Firestore:', error);
+    return [];
+  }
+}
+
+export function subscribeActivitiesFirestore(
+  onUpdate: (activities: Activity[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const path = ACTIVITIES_COLLECTION;
+  const colRef = collection(db, path);
+
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: Activity[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(buildCompleteActivityRecord(docSnap.data() as Activity, false));
+      });
+      list.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+      onUpdate(list);
+    },
+    (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
+      onError?.(error);
+    }
+  );
+}
+
+// =========================================================================
+// KOLEKSI ARSIP AGENDA KEGIATAN TERHAPUS: 'tempkegiatanlama'
+// =========================================================================
+
+export async function saveToTempKegiatanLamaFirestore(activity: Activity): Promise<void> {
+  const path = `${TEMP_KEGIATAN_LAMA_COLLECTION}/${activity.id}`;
+  try {
+    const payload = buildCompleteActivityRecord(activity, true);
+    await setDoc(doc(db, TEMP_KEGIATAN_LAMA_COLLECTION, activity.id), cleanForFirestore(payload));
+    await recordAllocatedActivityIdInCounter(activity.id);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteFromTempKegiatanLamaFirestore(activityId: string): Promise<void> {
+  const path = `${TEMP_KEGIATAN_LAMA_COLLECTION}/${activityId}`;
+  try {
+    await deleteDoc(doc(db, TEMP_KEGIATAN_LAMA_COLLECTION, activityId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function fetchTempKegiatanLamaFromFirestore(): Promise<Activity[]> {
+  try {
+    const snap = await getDocs(collection(db, TEMP_KEGIATAN_LAMA_COLLECTION));
+    const list: Activity[] = [];
+    snap.forEach(d => {
+      list.push(buildCompleteActivityRecord(d.data() as Activity, true));
+    });
+    list.sort((a, b) => new Date(b.deletedAt || b.updatedAt).getTime() - new Date(a.deletedAt || a.updatedAt).getTime());
+    return list;
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('Error fetching tempkegiatanlama:', error);
+    return [];
+  }
+}
+
+export function subscribeTempKegiatanLamaFirestore(
+  onUpdate: (deletedActivities: Activity[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const path = TEMP_KEGIATAN_LAMA_COLLECTION;
+  const colRef = collection(db, path);
+
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: Activity[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(buildCompleteActivityRecord(docSnap.data() as Activity, true));
+      });
+      list.sort((a, b) => new Date(b.deletedAt || b.updatedAt).getTime() - new Date(a.deletedAt || a.updatedAt).getTime());
+      onUpdate(list);
+    },
+    (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
+      onError?.(error);
+    }
+  );
+}
+
+// =========================================================================
+// KOLEKSI DRAFT AGENDA BELUM DISIMPAN: 'tempkegiatansebelumsimpan' (Interval 5 Detik)
+// =========================================================================
+
+export async function saveTempKegiatanSebelumSimpanToFirestore(draft: TempKegiatanSebelumSimpan): Promise<void> {
+  const path = `${TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION}/${draft.idtempkegiatan}`;
+  try {
+    const cleanPayload = cleanForFirestore({
+      ...draft,
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(doc(db, TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION, draft.idtempkegiatan), cleanPayload, { merge: true });
+  } catch (error) {
+    if (isFirestoreQuotaError(error)) {
+      notifyQuotaLimitExceeded(error instanceof Error ? error.message : String(error));
+    }
+    console.warn('[TEMP_KEGIATAN_SEBELUM_SIMPAN_NOTE]', error);
+  }
+}
+
+export async function fetchTempKegiatanSebelumSimpanFromFirestore(): Promise<TempKegiatanSebelumSimpan[]> {
+  try {
+    const snap = await getDocs(collection(db, TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION));
+    const list: TempKegiatanSebelumSimpan[] = [];
+    snap.forEach(d => list.push(d.data() as TempKegiatanSebelumSimpan));
+    list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return list;
+  } catch (error) {
+    console.warn('Error fetching tempkegiatansebelumsimpan:', error);
+    return [];
+  }
+}
+
+export function subscribeTempKegiatanSebelumSimpanFirestore(
+  onUpdate: (drafts: TempKegiatanSebelumSimpan[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const path = TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION;
+  const colRef = collection(db, path);
+
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: TempKegiatanSebelumSimpan[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as TempKegiatanSebelumSimpan);
+      });
+      list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      onUpdate(list);
+    },
+    (error) => {
+      if (isFirestoreQuotaError(error)) {
+        notifyQuotaLimitExceeded(error.message);
+        onError?.(new Error(QUOTA_LIMIT_MESSAGE));
+        return;
+      }
+      onError?.(error);
+    }
+  );
+}
+
+export async function deleteTempKegiatanSebelumSimpanFromFirestore(idtempkegiatan: string): Promise<void> {
+  const path = `${TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION}/${idtempkegiatan}`;
+  try {
+    await deleteDoc(doc(db, TEMP_KEGIATAN_SEBELUM_SIMPAN_COLLECTION, idtempkegiatan));
+  } catch (error) {
+    console.warn('Error deleting tempkegiatansebelumsimpan:', path, error);
+  }
+}
+
 

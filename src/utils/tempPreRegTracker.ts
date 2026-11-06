@@ -1,13 +1,17 @@
-import { TempDataSebelumDaftar, FamilyRole, MemberStatus } from '../types';
+import { TempDataSebelumDaftar, TempKegiatanSebelumSimpan, ActivityType, FamilyRole, MemberStatus } from '../types';
 import {
   saveTempDataSebelumDaftarToFirestore,
   fetchTempDataSebelumDaftarFromFirestore,
   deleteTempDataSebelumDaftarFromFirestore,
+  saveTempKegiatanSebelumSimpanToFirestore,
+  fetchTempKegiatanSebelumSimpanFromFirestore,
+  deleteTempKegiatanSebelumSimpanFromFirestore,
 } from '../firebase';
 import { recordSystemLog } from './systemLogger';
 
 const STORAGE_DEVICE_IMEI_KEY = 'yayasan_alikhlas_device_imei_v1';
 const STORAGE_TEMP_BEFORE_REG_KEY = 'yayasan_alikhlas_tempdatasebelumdaftar_v1';
+const STORAGE_TEMP_ACTIVITY_DRAFT_KEY = 'yayasan_alikhlas_tempkegiatansebelumsimpan_v1';
 
 let cachedIpLocation: string | null = null;
 let ipFetchPromise: Promise<string> | null = null;
@@ -283,7 +287,96 @@ export async function syncDraftToTempDataSebelumDaftar(
   return draft;
 }
 
+// =========================================================================
+// KOLEKSI TEMPORARY AGENDA BELUM DISIMPAN: 'tempkegiatansebelumsimpan' (Interval 5 Detik)
+// =========================================================================
+
+export function generateUniqueIdTempKegiatan(ipLocation?: string): string {
+  const imei = getOrGenerateDeviceImei().replace(/[^a-zA-Z0-9_-]/g, '');
+  const browser = detectBrowserType().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16);
+  const device = detectDeviceVersion().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 22);
+  const ipClean = (ipLocation || cachedIpLocation || 'Asia-Makassar')
+    .replace(/\./g, '-')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 24);
+  const timePart = Date.now().toString(36).toUpperCase();
+  const randPart = Math.random().toString(36).substring(2, 6).toUpperCase();
+
+  const rawId = `TMPACT_${imei}_${device}_${browser}_${ipClean}_${timePart}${randPart}`;
+  return rawId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+}
+
+export function getStoredTempKegiatanSebelumSimpan(): TempKegiatanSebelumSimpan[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_TEMP_ACTIVITY_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalTempKegiatanSebelumSimpan(list: TempKegiatanSebelumSimpan[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_TEMP_ACTIVITY_DRAFT_KEY, JSON.stringify(list.slice(0, 30)));
+  } catch {}
+}
+
+export async function syncDraftToTempKegiatanSebelumSimpan(
+  idtempkegiatan: string,
+  fields: {
+    statusDraft?: 'sedang_mengisi' | 'selesai_simpan';
+    finalActivityId?: string;
+    judul?: string;
+    jenis?: ActivityType;
+    tanggal?: string;
+    jamMulai?: string;
+    jamSelesai?: string;
+    lokasi?: string;
+    deskripsi?: string;
+    pesertaIds?: string[];
+    createdAt?: string;
+  }
+): Promise<TempKegiatanSebelumSimpan> {
+  const ipLocation = await resolveIpLocation();
+  const browserType = detectBrowserType();
+  const deviceVersion = detectDeviceVersion();
+  const deviceImei = getOrGenerateDeviceImei();
+  const nowIso = new Date().toISOString();
+
+  const draft: TempKegiatanSebelumSimpan = {
+    idtempkegiatan,
+    ipLocation,
+    browserType,
+    deviceVersion,
+    deviceImei,
+    statusDraft: fields.statusDraft || 'sedang_mengisi',
+    finalActivityId: fields.finalActivityId || '',
+    judul: fields.judul || '',
+    jenis: fields.jenis || 'pengajian_umum',
+    tanggal: fields.tanggal || nowIso.slice(0, 10),
+    jamMulai: fields.jamMulai || '19:30',
+    jamSelesai: fields.jamSelesai || '21:30',
+    lokasi: fields.lokasi || '',
+    deskripsi: fields.deskripsi || '',
+    pesertaIds: Array.isArray(fields.pesertaIds) ? fields.pesertaIds : [],
+    createdAt: fields.createdAt || nowIso,
+    updatedAt: nowIso,
+  };
+
+  const currentLocal = getStoredTempKegiatanSebelumSimpan();
+  const updatedLocal = [draft, ...currentLocal.filter(d => d.idtempkegiatan !== idtempkegiatan)];
+  saveLocalTempKegiatanSebelumSimpan(updatedLocal);
+
+  await saveTempKegiatanSebelumSimpanToFirestore(draft);
+
+  return draft;
+}
+
 export {
   fetchTempDataSebelumDaftarFromFirestore,
   deleteTempDataSebelumDaftarFromFirestore,
+  fetchTempKegiatanSebelumSimpanFromFirestore,
+  deleteTempKegiatanSebelumSimpanFromFirestore,
 };

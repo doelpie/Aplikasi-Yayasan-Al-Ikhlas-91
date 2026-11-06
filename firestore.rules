@@ -58,6 +58,25 @@ service cloud.firestore {
              data.timestamp is string && data.timestamp.size() <= 100;
     }
 
+    function isValidActivity(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+             data.judul is string && data.judul.size() > 0 && data.judul.size() <= 250 &&
+             data.jenis in ['rapat_pengurus', 'pengajian_umum', 'arisan'] &&
+             data.tanggal is string && data.tanggal.size() > 0 && data.tanggal.size() <= 30 &&
+             data.jamMulai is string && data.jamMulai.size() > 0 && data.jamMulai.size() <= 20;
+    }
+
+    function isValidTempKegiatanSebelumSimpan(data) {
+      return data.idtempkegiatan is string && data.idtempkegiatan.size() > 0 && data.idtempkegiatan.size() <= 128 &&
+             data.ipLocation is string && data.ipLocation.size() <= 200 &&
+             data.browserType is string && data.browserType.size() <= 200 &&
+             data.deviceVersion is string && data.deviceVersion.size() <= 200 &&
+             data.deviceImei is string && data.deviceImei.size() <= 128 &&
+             data.statusDraft in ['sedang_mengisi', 'selesai_simpan'] &&
+             data.createdAt is string && data.createdAt.size() <= 100 &&
+             data.updatedAt is string && data.updatedAt.size() <= 100;
+    }
+
     // Default deny all
     match /{document=**} {
       allow read, write: if false;
@@ -127,11 +146,28 @@ service cloud.firestore {
       allow delete: if isValidId(notificationId);
     }
 
-    // Koleksi Kegiatan Yayasan
+    // Koleksi Resmi Jadwal & Presensi Kegiatan Yayasan (Sinkron Lintas Perangkat)
     match /activities/{activityId} {
       allow get: if isValidId(activityId);
       allow list: if true;
-      allow create, update, delete: if isValidId(activityId);
+      allow create, update: if isValidId(activityId) && isValidActivity(incoming());
+      allow delete: if isValidId(activityId);
+    }
+
+    // Koleksi Tempat Tampung Sementara Agenda Kegiatan Terhapus (tempkegiatanlama)
+    match /tempkegiatanlama/{activityId} {
+      allow get: if isValidId(activityId);
+      allow list: if true;
+      allow create, update: if isValidId(activityId) && isValidActivity(incoming());
+      allow delete: if isValidId(activityId);
+    }
+
+    // Koleksi Tempat Tampung Sementara Agenda Kegiatan Sebelum Simpan (tempkegiatansebelumsimpan) Auto-Sync 5 Detik
+    match /tempkegiatansebelumsimpan/{idtempkegiatan} {
+      allow get: if isValidId(idtempkegiatan);
+      allow list: if true;
+      allow create, update: if isValidId(idtempkegiatan) && isValidTempKegiatanSebelumSimpan(incoming());
+      allow delete: if isValidId(idtempkegiatan);
     }
 
     // Koleksi Catatan Seluruh Aktivitas, Log Sistem & Database (Teknis IT)

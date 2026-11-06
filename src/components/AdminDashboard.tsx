@@ -51,6 +51,7 @@ interface AdminDashboardProps {
   tempDataMenunggu?: Member[];
   tempDataLama?: Member[];
   activities: Activity[];
+  tempKegiatanLama?: Activity[];
   notifications: AppNotification[];
   onApprove: (memberId: string) => Promise<void> | void;
   onReject: (memberId: string, reason?: string) => Promise<void> | void;
@@ -64,9 +65,12 @@ interface AdminDashboardProps {
   onResetData: () => void;
   onOpenNotifications: () => void;
   // Activity Handlers
-  onAddNewActivity: (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>) => void;
-  onUpdateActivity: (updated: Activity) => void;
-  onDeleteActivity: (id: string) => void;
+  onAddNewActivity: (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>) => Promise<Activity | void> | void;
+  onUpdateActivity: (updated: Activity) => Promise<Activity | void> | void;
+  onDeleteActivity: (id: string) => Promise<void> | void;
+  onRestoreDeletedActivity?: (deletedActivity: Activity) => Promise<void> | void;
+  onSyncAllDevices?: () => Promise<void> | void;
+  onActivitiesSynced?: (synced: Activity[]) => void;
   onRecordAttendance: (
     activityId: string, 
     member: Member, 
@@ -80,6 +84,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   tempDataMenunggu = [],
   tempDataLama = [],
   activities,
+  tempKegiatanLama = [],
   notifications,
   onApprove,
   onReject,
@@ -95,6 +100,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onAddNewActivity,
   onUpdateActivity,
   onDeleteActivity,
+  onRestoreDeletedActivity,
+  onSyncAllDevices,
+  onActivitiesSynced,
   onRecordAttendance,
   onManualCheckIn,
 }) => {
@@ -767,10 +775,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           /* KEGIATAN MANAGEMENT VIEW */
           <ActivityManagement
             activities={activities}
+            tempKegiatanLama={tempKegiatanLama}
             allMembers={members}
             onAddNewActivity={onAddNewActivity}
             onUpdateActivity={onUpdateActivity}
             onDeleteActivity={onDeleteActivity}
+            onRestoreDeletedActivity={onRestoreDeletedActivity}
+            onSyncAllDevices={onSyncAllDevices}
             onOpenScanner={(actId) => {
               setScannerActivityId(actId);
               setIsScannerOpen(true);
@@ -784,11 +795,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             members={members}
             tempDataMenunggu={tempDataMenunggu}
             tempDataLama={tempDataLama}
+            activities={activities}
+            tempKegiatanLama={tempKegiatanLama}
             onApprove={onApprove}
             onReject={onReject}
             onEditMember={onEditMember}
             onDeleteMember={onDeleteMember}
             onRestoreFromTempDataLama={onRestoreFromTempDataLama}
+            onRestoreActivityFromTempKegiatanLama={onRestoreDeletedActivity}
+            onActivitiesSynced={onActivitiesSynced}
             onLockIT={() => {
               setIsItAuthenticated(false);
               setActiveNav('anggota');

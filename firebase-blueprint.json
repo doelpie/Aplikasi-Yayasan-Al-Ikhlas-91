@@ -464,12 +464,12 @@
     },
     "Activity": {
       "title": "Activity",
-      "description": "Jadwal dan Absensi Kegiatan Yayasan Al Ikhlas",
+      "description": "Jadwal dan Absensi Kegiatan Yayasan Al Ikhlas (sama antara koleksi aktif activities dan arsip terhapus tempkegiatanlama)",
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "ID unik kegiatan",
+          "description": "ID unik kegiatan (contoh: ACT-2026-001)",
           "maxLength": 64
         },
         "judul": {
@@ -516,9 +516,107 @@
           "type": "string",
           "description": "Waktu pembaruan format ISO",
           "maxLength": 100
+        },
+        "deletedAt": {
+          "type": "string",
+          "description": "Waktu agenda dihapus dan dipindahkan ke tempkegiatanlama format ISO",
+          "maxLength": 100
+        },
+        "deletedReason": {
+          "type": "string",
+          "description": "Alasan penghapusan agenda",
+          "maxLength": 500
         }
       },
       "required": ["id", "judul", "jenis", "tanggal", "jamMulai", "deskripsi", "createdAt", "updatedAt"]
+    },
+    "TempKegiatanSebelumSimpan": {
+      "title": "TempKegiatanSebelumSimpan",
+      "description": "Tempat tampung sementara agenda kegiatan yang sedang diketik / belum disimpan (auto-sync setiap 5 detik) dengan identitas unik perangkat",
+      "type": "object",
+      "properties": {
+        "idtempkegiatan": {
+          "type": "string",
+          "description": "ID unik draft kegiatan berdasarkan IP/Location, Browser, Versi HP/OS, dan IMEI perangkat",
+          "maxLength": 128
+        },
+        "ipLocation": {
+          "type": "string",
+          "description": "IP Address dan Lokasi / Zona Waktu perangkat",
+          "maxLength": 200
+        },
+        "browserType": {
+          "type": "string",
+          "description": "Tipe dan versi browser",
+          "maxLength": 200
+        },
+        "deviceVersion": {
+          "type": "string",
+          "description": "Versi HP / OS perangkat",
+          "maxLength": 200
+        },
+        "deviceImei": {
+          "type": "string",
+          "description": "Identitas unik perangkat / IMEI signature",
+          "maxLength": 128
+        },
+        "statusDraft": {
+          "type": "string",
+          "enum": ["sedang_mengisi", "selesai_simpan"],
+          "description": "Status draft agenda kegiatan"
+        },
+        "finalActivityId": {
+          "type": "string",
+          "description": "ID Kegiatan resmi setelah disimpan",
+          "maxLength": 64
+        },
+        "judul": {
+          "type": "string",
+          "description": "Judul kegiatan yang sedang diketik",
+          "maxLength": 250
+        },
+        "jenis": {
+          "type": "string",
+          "enum": ["rapat_pengurus", "pengajian_umum", "arisan"],
+          "description": "Jenis kegiatan"
+        },
+        "tanggal": {
+          "type": "string",
+          "description": "Tanggal kegiatan",
+          "maxLength": 30
+        },
+        "jamMulai": {
+          "type": "string",
+          "description": "Jam mulai kegiatan",
+          "maxLength": 20
+        },
+        "jamSelesai": {
+          "type": "string",
+          "description": "Jam selesai kegiatan",
+          "maxLength": 20
+        },
+        "lokasi": {
+          "type": "string",
+          "description": "Lokasi kegiatan",
+          "maxLength": 300
+        },
+        "deskripsi": {
+          "type": "string",
+          "description": "Deskripsi kegiatan",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Waktu mulai mengetik draft format ISO",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Waktu sinkronisasi 5 detik terakhir format ISO",
+          "maxLength": 100
+        }
+      },
+      "required": ["idtempkegiatan", "ipLocation", "browserType", "deviceVersion", "deviceImei", "statusDraft", "createdAt", "updatedAt"]
     },
     "SystemLog": {
       "title": "SystemLog",
@@ -583,7 +681,7 @@
     },
     "/system_counters/{counterId}": {
       "schema": "SystemCounter",
-      "description": "Koleksi pelacak nomor urut ID anggota unik"
+      "description": "Koleksi pelacak nomor urut ID anggota dan ID kegiatan unik"
     },
     "/notifications/{notificationId}": {
       "schema": "Notification",
@@ -591,7 +689,15 @@
     },
     "/activities/{activityId}": {
       "schema": "Activity",
-      "description": "Koleksi jadwal dan presensi kegiatan yayasan"
+      "description": "Koleksi resmi jadwal dan presensi kegiatan yayasan yang tersinkron di semua perangkat"
+    },
+    "/tempkegiatanlama/{activityId}": {
+      "schema": "Activity",
+      "description": "Koleksi tempat tampung sementara agenda kegiatan yang terhapus beserta daftar peserta dan riwayat presensi agar dapat dipulihkan oleh admin"
+    },
+    "/tempkegiatansebelumsimpan/{idtempkegiatan}": {
+      "schema": "TempKegiatanSebelumSimpan",
+      "description": "Koleksi tempat tampung sementara agenda kegiatan yang sedang diketik / belum disimpan (auto-sync 5 detik)"
     },
     "/system_logs/{logId}": {
       "schema": "SystemLog",

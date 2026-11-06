@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Member,
+  Activity as ActivityItem,
   SystemLogEntry,
   SystemLogCategory,
   SystemLogLevel,
   BugDiagnosticResult,
   FlaggedMemberAnomaly,
-  TempDataSebelumDaftar
+  TempDataSebelumDaftar,
+  TempKegiatanSebelumSimpan
 } from '../types';
 import {
   getStoredSystemLogs,
@@ -21,10 +23,15 @@ import {
   checkFirestoreConnectionStatus,
   subscribeSystemLogsFirestore,
   subscribeTempDataSebelumDaftarFirestore,
-  deleteTempDataSebelumDaftarFromFirestore
+  deleteTempDataSebelumDaftarFromFirestore,
+  subscribeTempKegiatanSebelumSimpanFirestore,
+  deleteTempKegiatanSebelumSimpanFromFirestore
 } from '../firebase';
-import { getStoredTempDataSebelumDaftar } from '../utils/tempPreRegTracker';
-import { getPeranLabel } from '../utils/storage';
+import {
+  getStoredTempDataSebelumDaftar,
+  getStoredTempKegiatanSebelumSimpan
+} from '../utils/tempPreRegTracker';
+import { getPeranLabel, getActivityTypeLabel } from '../utils/storage';
 import { FastMemberAvatar } from './FastMemberAvatar';
 import {
   Wrench,
@@ -51,31 +58,40 @@ import {
   Smartphone,
   Globe,
   Clock,
-  Archive
+  Archive,
+  CalendarDays
 } from 'lucide-react';
 
 interface TechnicalITPanelProps {
   members: Member[];
   tempDataMenunggu?: Member[];
   tempDataLama: Member[];
+  activities?: ActivityItem[];
+  tempKegiatanLama?: ActivityItem[];
   onLockIT: () => void;
   onApprove?: (memberId: string) => Promise<void> | void;
   onReject?: (memberId: string, reason?: string) => Promise<void> | void;
   onEditMember?: (member: Member) => void;
   onDeleteMember?: (memberId: string) => void;
   onRestoreFromTempDataLama?: (deletedMember: Member) => Promise<void> | void;
+  onRestoreActivityFromTempKegiatanLama?: (deletedActivity: ActivityItem) => Promise<void> | void;
+  onActivitiesSynced?: (synced: ActivityItem[]) => void;
 }
 
 export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
   members,
   tempDataMenunggu = [],
   tempDataLama,
+  activities = [],
+  tempKegiatanLama = [],
   onLockIT,
   onApprove,
   onReject,
   onEditMember,
   onDeleteMember,
   onRestoreFromTempDataLama,
+  onRestoreActivityFromTempKegiatanLama,
+  onActivitiesSynced,
 }) => {
   // Sub-tabs in Teknis IT: 'diagnostik' | 'logs' | 'database' | 'prereg'
   const [activeSubTab, setActiveSubTab] = useState<'diagnostik' | 'logs' | 'database' | 'prereg'>('diagnostik');
@@ -105,9 +121,11 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
     repairedItems: string[];
   } | null>(null);
 
-  // Pre-registration draft collection ('tempdatasebelumdaftar') state
+  // Pre-registration draft collection ('tempdatasebelumdaftar') & activity draft collection ('tempkegiatansebelumsimpan') state
   const [preRegDrafts, setPreRegDrafts] = useState<TempDataSebelumDaftar[]>(() => getStoredTempDataSebelumDaftar());
+  const [activityDrafts, setActivityDrafts] = useState<TempKegiatanSebelumSimpan[]>(() => getStoredTempKegiatanSebelumSimpan());
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [restoringActId, setRestoringActId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
   // Database Ping state
@@ -129,7 +147,7 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
     setFlaggedAnomalies(analyzeFlaggedMemberAnomalies(members, tempDataLama));
   }, [members, tempDataLama]);
 
-  // Real-time listeners for Firestore System Logs & tempdatasebelumdaftar
+  // Real-time listeners for Firestore System Logs, tempdatasebelumdaftar, & tempkegiatansebelumsimpan
   useEffect(() => {
     const unsubscribeLogs = subscribeSystemLogsFirestore((remoteLogs) => {
       if (remoteLogs && remoteLogs.length > 0) {
@@ -153,11 +171,18 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
       }
     });
 
+    const unsubscribeActDrafts = subscribeTempKegiatanSebelumSimpanFirestore((remoteActDrafts) => {
+      if (remoteActDrafts) {
+        setActivityDrafts(remoteActDrafts);
+      }
+    });
+
     handleRunBugDiagnostics();
 
     return () => {
       unsubscribeLogs();
       unsubscribePreReg();
+      unsubscribeActDrafts();
     };
   }, []);
 
@@ -225,6 +250,9 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
     setRepairResult(null);
     try {
       const result = await runAutoRepairProcess(members, tempDataLama);
+      if (result.syncedActivities && onActivitiesSynced) {
+        onActivitiesSynced(result.syncedActivities);
+      }
       setRepairResult({
         success: result.success,
         message: result.message,
@@ -1248,6 +1276,74 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
                         </button>
                       )}
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Daftar Arsip Agenda Kegiatan Terhapus ('tempkegiatanlama') - Pemulihan Manual dengan Konfirmasi Admin */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-emerald-200 shadow-xs space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-[#0b5d34]" />
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900">
+                    Tempat Tampung Agenda Kegiatan Terhapus (<code className="text-[#0b5d34]">tempkegiatanlama</code>) &amp; Draft Kegiatan (<code className="text-[#0b5d34]">tempkegiatansebelumsimpan</code>)
+                  </h4>
+                  <p className="text-[11px] text-gray-500">
+                    Menjamin seluruh jadwal kegiatan ({activities.length} jadwal aktif, {activityDrafts.length} draft kegiatan, {tempKegiatanLama.length} agenda terhapus) tersinkronisasi sama di semua perangkat (Laptop &amp; HP).
+                  </p>
+                </div>
+              </div>
+              <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#0b5d34] text-xs font-bold">
+                Jadwal Aktif: {activities.length} | Terhapus: {tempKegiatanLama.length}
+              </span>
+            </div>
+
+            {tempKegiatanLama.length === 0 ? (
+              <div className="p-6 text-center bg-gray-50 rounded-2xl text-xs text-gray-500">
+                Belum ada agenda kegiatan yang dihapus di koleksi <code className="font-bold">tempkegiatanlama</code>.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {tempKegiatanLama.map(act => (
+                  <div
+                    key={'del_act_' + act.id}
+                    className="p-3 rounded-2xl border border-amber-200 bg-amber-50/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0 text-xs space-y-0.5">
+                      <div className="font-bold text-gray-900">
+                        {act.judul} <span className="font-mono text-amber-800">(ID: {act.id})</span>
+                      </div>
+                      <div className="text-[11px] text-gray-600">
+                        Jenis: {getActivityTypeLabel(act.jenis)} &bull; Tanggal: <strong>{act.tanggal}</strong> ({act.jamMulai} - {act.jamSelesai || 'Selesai'})
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        Peserta: {(act.pesertaIds || []).length} anggota &bull; Presensi Hadir: {(act.kehadiran || []).length} orang
+                      </div>
+                    </div>
+
+                    {onRestoreActivityFromTempKegiatanLama && (
+                      <button
+                        type="button"
+                        disabled={restoringActId === act.id}
+                        onClick={async () => {
+                          if (window.confirm(`Konfirmasi Admin: Pulihkan agenda kegiatan "${act.judul}" (ID: ${act.id}) dari tempkegiatanlama kembali ke daftar jadwal aktif di semua device?`)) {
+                            setRestoringActId(act.id);
+                            try {
+                              await onRestoreActivityFromTempKegiatanLama(act);
+                            } finally {
+                              setRestoringActId(null);
+                            }
+                          }
+                        }}
+                        className="px-3.5 py-2 bg-[#0b5d34] hover:bg-[#084d2a] disabled:opacity-60 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer inline-flex items-center gap-1.5 shrink-0"
+                      >
+                        <RotateCcw className={`w-3.5 h-3.5 ${restoringActId === act.id ? 'animate-spin' : ''}`} />
+                        <span>{restoringActId === act.id ? 'Memulihkan...' : 'Pulihkan Agenda'}</span>
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

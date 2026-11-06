@@ -22,9 +22,13 @@ import {
   getCurrentUserSession,
   setCurrentUserSession,
   getStoredActivities,
-  addNewActivity,
-  updateActivity,
-  deleteActivity,
+  getStoredTempKegiatanLama,
+  saveTempKegiatanLama,
+  reconcileAuthoritativeActivities,
+  addNewActivityAsync,
+  updateActivityAsync,
+  deleteActivityAsync,
+  restoreActivityFromTempKegiatanLamaAsync,
   recordAttendance,
   loadMembersFromIndexedDB
 } from './utils/storage';
@@ -46,6 +50,10 @@ import {
   subscribeTempDataMenungguFirestore,
   subscribeTempDataLamaFirestore,
   subscribeNotificationsFirestore, 
+  subscribeActivitiesFirestore,
+  subscribeTempKegiatanLamaFirestore,
+  fetchActivitiesFromFirestore,
+  fetchTempKegiatanLamaFromFirestore,
   seedInitialDataIfEmpty,
   subscribeToQuotaLimitErrors,
   isFirestoreQuotaError,
@@ -70,10 +78,13 @@ export default function App() {
   const [tempDataMenunggu, setTempDataMenunggu] = useState<Member[]>(() => getStoredTempDataMenunggu());
   const [tempDataLama, setTempDataLama] = useState<Member[]>(() => getStoredTempDataLama());
   const [activities, setActivities] = useState<Activity[]>(() => getStoredActivities());
+  const [tempKegiatanLama, setTempKegiatanLama] = useState<Activity[]>(() => getStoredTempKegiatanLama());
   const [notifications, setNotifications] = useState<AppNotification[]>(() => getStoredNotifications());
   const latestRemoteMembersRef = React.useRef<Member[]>(getStoredMembers());
   const latestRemoteWaitingRef = React.useRef<Member[]>(getStoredTempDataMenunggu());
   const latestRemoteDeletedRef = React.useRef<Member[]>(getStoredTempDataLama());
+  const latestRemoteActivitiesRef = React.useRef<Activity[]>(getStoredActivities());
+  const latestRemoteDeletedActivitiesRef = React.useRef<Activity[]>(getStoredTempKegiatanLama());
 
   // Modals & Popups State
   const [verifyingMember, setVerifyingMember] = useState<Member | null>(null);
@@ -95,6 +106,8 @@ export default function App() {
       setMembers(refreshedMembers);
       setTempDataMenunggu(getStoredTempDataMenunggu());
       setTempDataLama(getStoredTempDataLama());
+      setActivities(getStoredActivities());
+      setTempKegiatanLama(getStoredTempKegiatanLama());
 
       // Refresh current session if matches
       const activeUser = sessionRef.current;
@@ -175,6 +188,14 @@ export default function App() {
       }
     };
 
+    const applyActivitiesReconciliation = async () => {
+      const { activities: unifiedActivities } = await reconcileAuthoritativeActivities(
+        latestRemoteActivitiesRef.current,
+        latestRemoteDeletedActivitiesRef.current
+      );
+      setActivities(unifiedActivities);
+    };
+
     // 2a. Real-time subscription to Firebase Firestore 'members' (Koleksi Anggota Resmi)
     const unsubMembers = subscribeMembersFirestore((remoteMembers) => {
       latestRemoteMembersRef.current = remoteMembers || [];
@@ -197,6 +218,20 @@ export default function App() {
       applyAuthoritativeReconciliation();
     });
 
+    // 2d. Real-time subscription to Firebase Firestore 'tempkegiatanlama' (Arsip Jadwal Kegiatan Terhapus)
+    const unsubTempKegiatanLama = subscribeTempKegiatanLamaFirestore((remoteDeletedActs) => {
+      latestRemoteDeletedActivitiesRef.current = remoteDeletedActs || [];
+      setTempKegiatanLama(remoteDeletedActs || []);
+      saveTempKegiatanLama(remoteDeletedActs || []);
+      applyActivitiesReconciliation();
+    });
+
+    // 2e. Real-time subscription to Firebase Firestore 'activities' (Jadwal & Presensi Kegiatan Lintas Perangkat)
+    const unsubActivities = subscribeActivitiesFirestore((remoteActs) => {
+      latestRemoteActivitiesRef.current = remoteActs || [];
+      applyActivitiesReconciliation();
+    });
+
     // 3. Real-time subscription to Firebase Firestore Notifications
     const unsubNotifs = subscribeNotificationsFirestore((remoteNotifs) => {
       if (remoteNotifs) {
@@ -216,6 +251,7 @@ export default function App() {
         setTempDataLama(getStoredTempDataLama());
         setNotifications(getStoredNotifications());
         setActivities(getStoredActivities());
+        setTempKegiatanLama(getStoredTempKegiatanLama());
         const freshUser = getCurrentUserSession();
         setSessionMember(freshUser);
       }
@@ -227,6 +263,8 @@ export default function App() {
       unsubMembers();
       unsubTempDataMenunggu();
       unsubTempDataLama();
+      unsubTempKegiatanLama();
+      unsubActivities();
       unsubNotifs();
       unsubscribeBroadcast();
       window.removeEventListener('storage', onStorageChange);
@@ -444,24 +482,65 @@ export default function App() {
     setNotifications(getStoredNotifications());
   };
 
-  // Handlers for Activities (Kegiatan Yayasan)
+  // Handlers for Activities (Kegiatan Yayasan - Tersinkron di semua device melalui Firestore)
   const handleAddNewActivity = (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>) => {
-    const created = addNewActivity(data);
-    setActivities(getStoredActivities());
-    return created;
+    addNewActivityAsync(data)
+      .then(() => {
+        setActivities(getStoredActivities());
+      })
+      .catch((err) => {
+        console.warn('Error adding activity to Firestore:', err);
+        setActivities(getStoredActivities());
+      });
   };
 
   const handleUpdateActivity = (updated: Activity) => {
-    updateActivity(updated);
-    setActivities(getStoredActivities());
+    updateActivityAsync(updated)
+      .then(() => {
+        setActivities(getStoredActivities());
+      })
+      .catch((err) => {
+        console.warn('Error updating activity in Firestore:', err);
+        setActivities(getStoredActivities());
+      });
   };
 
   const handleDeleteActivity = (id: string) => {
     const act = activities.find(a => a.id === id);
-    if (window.confirm(`Apakah Anda yakin ingin menghapus kegiatan "${act?.judul || id}"?`)) {
-      deleteActivity(id);
-      setActivities(getStoredActivities());
+    if (window.confirm(`Apakah Anda yakin ingin menghapus kegiatan "${act?.judul || id}"? Agenda ini akan dipindahkan ke arsip terhapus (tempkegiatanlama) agar dapat dipulihkan kembali bila diperlukan.`)) {
+      deleteActivityAsync(id)
+        .then(() => {
+          setActivities(getStoredActivities());
+          setTempKegiatanLama(getStoredTempKegiatanLama());
+        })
+        .catch(() => {
+          setActivities(getStoredActivities());
+          setTempKegiatanLama(getStoredTempKegiatanLama());
+        });
     }
+  };
+
+  const handleRestoreActivity = async (deletedActivity: Activity) => {
+    const restored = await restoreActivityFromTempKegiatanLamaAsync(deletedActivity);
+    if (restored) {
+      setActivities(getStoredActivities());
+      setTempKegiatanLama(getStoredTempKegiatanLama());
+    }
+  };
+
+  const handleForceSyncActivities = async () => {
+    const [remoteActs, remoteDeletedActs] = await Promise.all([
+      fetchActivitiesFromFirestore().catch(() => latestRemoteActivitiesRef.current),
+      fetchTempKegiatanLamaFromFirestore().catch(() => latestRemoteDeletedActivitiesRef.current),
+    ]);
+    latestRemoteActivitiesRef.current = remoteActs;
+    latestRemoteDeletedActivitiesRef.current = remoteDeletedActs;
+    const { activities: unifiedActivities } = await reconcileAuthoritativeActivities(
+      remoteActs,
+      remoteDeletedActs
+    );
+    setActivities(unifiedActivities);
+    setTempKegiatanLama(remoteDeletedActs);
   };
 
   const handleRecordAttendance = (
@@ -522,6 +601,7 @@ export default function App() {
             tempDataMenunggu={tempDataMenunggu}
             tempDataLama={tempDataLama}
             activities={activities}
+            tempKegiatanLama={tempKegiatanLama}
             notifications={notifications}
             onApprove={handleApprove}
             onReject={handleReject}
@@ -540,6 +620,9 @@ export default function App() {
             onAddNewActivity={handleAddNewActivity}
             onUpdateActivity={handleUpdateActivity}
             onDeleteActivity={handleDeleteActivity}
+            onRestoreDeletedActivity={handleRestoreActivity}
+            onSyncAllDevices={handleForceSyncActivities}
+            onActivitiesSynced={(syncedActs) => setActivities(syncedActs)}
             onRecordAttendance={handleRecordAttendance}
             onManualCheckIn={handleManualCheckIn}
           />

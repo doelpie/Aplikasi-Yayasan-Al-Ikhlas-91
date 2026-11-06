@@ -20,6 +20,15 @@ import {
   deleteFromTempDataLamaFirestore,
   fetchTempDataLamaFromFirestore,
   fetchMembersFromFirestore,
+  allocateUniqueActivityIdFromServer,
+  recordAllocatedActivityIdInCounter,
+  parseActivityNumber,
+  saveActivityToFirestore,
+  deleteActivityFromFirestore,
+  fetchActivitiesFromFirestore,
+  saveToTempKegiatanLamaFirestore,
+  deleteFromTempKegiatanLamaFirestore,
+  fetchTempKegiatanLamaFromFirestore,
   QUOTA_LIMIT_MESSAGE,
   isFirestoreQuotaError,
   notifyQuotaLimitExceeded
@@ -55,6 +64,7 @@ const STORAGE_TEMP_DATA_LAMA_KEY = 'yayasan_alikhlas_tempdatalama_v1';
 const STORAGE_NOTIF_KEY = 'yayasan_alikhlas_notifications_v3';
 const STORAGE_USER_KEY = 'yayasan_alikhlas_user_session_v3';
 const STORAGE_ACTIVITIES_KEY = 'yayasan_alikhlas_activities_v1';
+const STORAGE_TEMP_KEGIATAN_LAMA_KEY = 'yayasan_alikhlas_tempkegiatanlama_v1';
 const STORAGE_REGISTRATION_TRACES_KEY = 'yayasan_alikhlas_reg_traces_v1';
 const BROADCAST_CHANNEL_NAME = 'yayasan_alikhlas_channel_nu_v3';
 
@@ -2049,25 +2059,70 @@ export const INITIAL_ACTIVITIES: Activity[] = [
   }
 ];
 
+let inMemoryActivities: Activity[] | null = null;
+let inMemoryTempKegiatanLama: Activity[] | null = null;
+
+export function getStoredTempKegiatanLama(): Activity[] {
+  if (inMemoryTempKegiatanLama) {
+    return inMemoryTempKegiatanLama;
+  }
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_TEMP_KEGIATAN_LAMA_KEY);
+    const parsed: Activity[] = raw ? JSON.parse(raw) : [];
+    inMemoryTempKegiatanLama = parsed;
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveTempKegiatanLama(deletedActivities: Activity[]): void {
+  inMemoryTempKegiatanLama = deletedActivities;
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_TEMP_KEGIATAN_LAMA_KEY, JSON.stringify(deletedActivities));
+  } catch (err) {
+    console.warn('Error saving tempkegiatanlama to localStorage:', err);
+  }
+}
+
 export function getStoredActivities(): Activity[] {
+  if (inMemoryActivities) {
+    return inMemoryActivities;
+  }
   if (typeof window === 'undefined') return INITIAL_ACTIVITIES;
   try {
     const raw = localStorage.getItem(STORAGE_ACTIVITIES_KEY);
     if (!raw) {
       localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(INITIAL_ACTIVITIES));
+      inMemoryActivities = INITIAL_ACTIVITIES;
       return INITIAL_ACTIVITIES;
     }
-    return JSON.parse(raw);
+    const parsed: Activity[] = JSON.parse(raw);
+    inMemoryActivities = parsed;
+    return parsed;
   } catch (err) {
     console.error('Error reading activities from localStorage:', err);
-    return INITIAL_ACTIVITIES;
+    return inMemoryActivities || INITIAL_ACTIVITIES;
   }
 }
 
 export function saveActivities(activities: Activity[]): void {
+  inMemoryActivities = activities;
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(activities));
+    // Strip heavy base64 images inside kehadiran before saving to localStorage
+    const lightweight = activities.map(act => ({
+      ...act,
+      kehadiran: Array.isArray(act.kehadiran)
+        ? act.kehadiran.map(k => ({
+            ...k,
+            memberFotoUrl: k.memberFotoUrl && k.memberFotoUrl.startsWith('data:') && k.memberFotoUrl.length > 5000 ? '' : k.memberFotoUrl,
+          }))
+        : [],
+    }));
+    localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(lightweight));
     broadcastRealtime({
       type: 'DATA_SYNC',
       payload: { member: {} as any },
@@ -2077,12 +2132,199 @@ export function saveActivities(activities: Activity[]): void {
   }
 }
 
-export function addNewActivity(
+/**
+ * Menggabungkan (reconcile) seluruh jadwal kegiatan dari server Firestore `activities` dan `localStorage` perangkat ini:
+ * - Menjamin mengapa sebelumnya di laptop ada 3, laptop admin lain ada 4, HP admin ada 3, dan HP user ada 1 langsung tersinkronisasi 100% menjadi daftar yang SAMA di semua perangkat.
+ * - Jika ada jadwal lokal di perangkat yang belum ada di server Firestore (dan belum pernah dihapus di `tempkegiatanlama`), otomatis di-push ke Firestore.
+ * - Jika terjadi benturan ID (2 kegiatan berbeda memiliki ID yang sama karena sistem lama memakai `activities.length + 1`), otomatis memberikan ID unik baru `ACT-2026-NNN` pada jadwal yang bertabrakan tanpa menimpa/menghilangkan salah satunya!
+ * - Menggabungkan daftar peserta (`pesertaIds`) dan presensi (`kehadiran`) secara utuh tanpa duplikasi.
+ */
+export async function reconcileAuthoritativeActivities(
+  remoteActivities?: Activity[],
+  remoteDeletedActivities?: Activity[]
+): Promise<{
+  activities: Activity[];
+  pushedCount: number;
+  resolvedCollisionIds: string[];
+}> {
+  const firestoreActs = remoteActivities ?? (await fetchActivitiesFromFirestore());
+  const deletedActs = remoteDeletedActivities ?? (await fetchTempKegiatanLamaFromFirestore());
+  if (deletedActs.length > 0) {
+    saveTempKegiatanLama(deletedActs);
+  }
+
+  const localActs = getStoredActivities();
+  const deletedIds = new Set(deletedActs.map(d => d.id));
+  const deletedTitlesDates = new Set(
+    deletedActs.map(d => `${(d.judul || '').toLowerCase().trim()}__${d.tanggal}`)
+  );
+
+  const mergedById = new Map<string, Activity>();
+  const toPushToFirestore: Activity[] = [];
+  const resolvedCollisionIds: string[] = [];
+
+  // Hitung nomor ID tertinggi yang sudah ada di server & arsip
+  let maxSeqNum = 3;
+  const registerNum = (id?: string) => {
+    const n = parseActivityNumber(id);
+    if (n > maxSeqNum) maxSeqNum = n;
+  };
+  firestoreActs.forEach(a => registerNum(a.id));
+  deletedActs.forEach(a => registerNum(a.id));
+  localActs.forEach(a => registerNum(a.id));
+
+  // Helper untuk menggabungkan kehadiran & peserta dari 2 versi jadwal yang sama
+  const mergeSameActivity = (base: Activity, incoming: Activity): Activity => {
+    const pesertaSet = new Set<string>([
+      ...(Array.isArray(base.pesertaIds) ? base.pesertaIds : []),
+      ...(Array.isArray(incoming.pesertaIds) ? incoming.pesertaIds : []),
+    ]);
+
+    const kehadiranMap = new Map<string, ActivityAttendee>();
+    (Array.isArray(base.kehadiran) ? base.kehadiran : []).forEach(k => {
+      if (k && k.memberId) kehadiranMap.set(k.memberId, k);
+    });
+    (Array.isArray(incoming.kehadiran) ? incoming.kehadiran : []).forEach(k => {
+      if (k && k.memberId && !kehadiranMap.has(k.memberId)) {
+        kehadiranMap.set(k.memberId, k);
+      }
+    });
+
+    const baseTime = new Date(base.updatedAt || base.createdAt || 0).getTime();
+    const incTime = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
+    const newer = incTime > baseTime ? incoming : base;
+
+    return {
+      ...base,
+      ...newer,
+      id: base.id,
+      pesertaIds: Array.from(pesertaSet),
+      kehadiran: Array.from(kehadiranMap.values()),
+      updatedAt: new Date(Math.max(baseTime, incTime, Date.now())).toISOString(),
+    };
+  };
+
+  // 1. Masukkan seluruh kegiatan resmi dari Firestore (kecuali yang sudah ada di tempkegiatanlama)
+  for (const rAct of firestoreActs) {
+    if (!rAct || !rAct.id) continue;
+    if (deletedIds.has(rAct.id)) continue;
+    mergedById.set(rAct.id, rAct);
+  }
+
+  // 2. Periksa kegiatan yang ada di perangkat lokal (atau INITIAL_ACTIVITIES jika belum pernah disinkronkan)
+  const candidateLocalList =
+    firestoreActs.length === 0 && localActs.length === 0 ? INITIAL_ACTIVITIES : localActs;
+
+  for (const lAct of candidateLocalList) {
+    if (!lAct || !lAct.id) continue;
+    const sig = `${(lAct.judul || '').toLowerCase().trim()}__${lAct.tanggal}`;
+
+    // Jangan masukkan kembali jika sudah pernah dihapus oleh Admin ke tempkegiatanlama
+    if (deletedIds.has(lAct.id) || deletedTitlesDates.has(sig)) {
+      continue;
+    }
+
+    const existingInMap = mergedById.get(lAct.id);
+    if (!existingInMap) {
+      // Cek apakah sebenarnya sudah ada di Firestore dengan ID berbeda tetapi judul & tanggal sama
+      const sameTitleDateInMap = Array.from(mergedById.values()).find(
+        m => m.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() && m.tanggal === lAct.tanggal
+      );
+
+      if (sameTitleDateInMap) {
+        const combined = mergeSameActivity(sameTitleDateInMap, lAct);
+        mergedById.set(sameTitleDateInMap.id, combined);
+        if (
+          combined.kehadiran.length > sameTitleDateInMap.kehadiran.length ||
+          combined.pesertaIds.length > sameTitleDateInMap.pesertaIds.length
+        ) {
+          toPushToFirestore.push(combined);
+        }
+      } else {
+        // Jadwal lokal yang belum ada di server Firestore -> Push ke Firestore agar muncul di semua device!
+        mergedById.set(lAct.id, lAct);
+        toPushToFirestore.push(lAct);
+      }
+    } else {
+      // ID sama sudah ada di Firestore: cek apakah ini jadwal yang sama atau jadwal berbeda yang mengalami tabrakan ID!
+      const isSameSchedule =
+        existingInMap.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() ||
+        (existingInMap.tanggal === lAct.tanggal && existingInMap.jenis === lAct.jenis);
+
+      if (isSameSchedule) {
+        const combined = mergeSameActivity(existingInMap, lAct);
+        mergedById.set(existingInMap.id, combined);
+        if (
+          combined.kehadiran.length > existingInMap.kehadiran.length ||
+          combined.pesertaIds.length > existingInMap.pesertaIds.length
+        ) {
+          toPushToFirestore.push(combined);
+        }
+      } else {
+        // TABRAKAN ID TERDETEKSI! (Misal: di device ini ID ACT-2026-003 adalah jadwal baru, sedangkan di server ACT-2026-003 adalah jadwal lain)
+        // Berikan ID unik baru yang belum terpakai agar kedua jadwal tetap tersimpan & muncul di semua device!
+        const alreadyExistsElsewhere = Array.from(mergedById.values()).some(
+          m => m.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() && m.tanggal === lAct.tanggal
+        );
+        if (!alreadyExistsElsewhere) {
+          maxSeqNum++;
+          let newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
+          while (mergedById.has(newUniqueId) || deletedIds.has(newUniqueId)) {
+            maxSeqNum++;
+            newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
+          }
+          const reassignedAct: Activity = {
+            ...lAct,
+            id: newUniqueId,
+            kehadiran: (lAct.kehadiran || []).map(k => ({ ...k, activityId: newUniqueId })),
+            updatedAt: new Date().toISOString(),
+          };
+          mergedById.set(newUniqueId, reassignedAct);
+          toPushToFirestore.push(reassignedAct);
+          resolvedCollisionIds.push(`${lAct.judul} (${lAct.id} -> ${newUniqueId})`);
+        }
+      }
+    }
+  }
+
+  const finalActivities = Array.from(mergedById.values()).sort(
+    (a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime()
+  );
+
+  saveActivities(finalActivities);
+
+  // Push jadwal yang belum tersinkron ke Firestore
+  let pushedCount = 0;
+  for (const actToPush of toPushToFirestore) {
+    try {
+      await saveActivityToFirestore(actToPush);
+      pushedCount++;
+    } catch (err) {
+      console.warn('Note pushing unsynced activity to Firestore:', actToPush.id, err);
+    }
+  }
+
+  if (finalActivities.length > 0) {
+    const highestNum = finalActivities.reduce((max, a) => {
+      const n = parseActivityNumber(a.id);
+      return n > max ? n : max;
+    }, maxSeqNum);
+    recordAllocatedActivityIdInCounter(`ACT-2026-${String(highestNum).padStart(3, '0')}`, highestNum).catch(() => {});
+  }
+
+  return {
+    activities: finalActivities,
+    pushedCount,
+    resolvedCollisionIds,
+  };
+}
+
+export async function addNewActivityAsync(
   data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>
-): Activity {
+): Promise<Activity> {
   const activities = getStoredActivities();
-  const nextNum = activities.length + 1;
-  const newId = `ACT-2026-${String(nextNum).padStart(3, '0')}`;
+  const deletedActivities = getStoredTempKegiatanLama();
+  const newId = await allocateUniqueActivityIdFromServer(activities, deletedActivities);
   const now = new Date().toISOString();
 
   const newActivity: Activity = {
@@ -2093,27 +2335,178 @@ export function addNewActivity(
     updatedAt: now,
   };
 
-  activities.unshift(newActivity);
-  saveActivities(activities);
+  await saveActivityToFirestore(newActivity);
+
+  const latest = [newActivity, ...getStoredActivities().filter(a => a.id !== newId)];
+  saveActivities(latest);
   return newActivity;
 }
 
+export function addNewActivity(
+  data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>
+): Activity {
+  const activities = getStoredActivities();
+  const deletedActivities = getStoredTempKegiatanLama();
+  const allKnown = [...activities, ...deletedActivities];
+  const maxNum = allKnown.reduce((max, a) => {
+    const num = parseActivityNumber(a.id);
+    return num > max ? num : max;
+  }, 3);
+
+  const newId = `ACT-2026-${String(maxNum + 1).padStart(3, '0')}`;
+  const now = new Date().toISOString();
+
+  const newActivity: Activity = {
+    ...data,
+    id: newId,
+    kehadiran: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const updated = [newActivity, ...activities.filter(a => a.id !== newId)];
+  saveActivities(updated);
+
+  saveActivityToFirestore(newActivity).catch(err => {
+    console.warn('Async saveActivityToFirestore note:', err);
+  });
+
+  return newActivity;
+}
+
+export async function updateActivityAsync(updated: Activity): Promise<Activity> {
+  const now = new Date().toISOString();
+  const finalUpdated: Activity = {
+    ...updated,
+    updatedAt: now,
+  };
+
+  await saveActivityToFirestore(finalUpdated);
+
+  const activities = getStoredActivities();
+  const idx = activities.findIndex(a => a.id === finalUpdated.id);
+  if (idx !== -1) {
+    activities[idx] = finalUpdated;
+    saveActivities([...activities]);
+  } else {
+    saveActivities([finalUpdated, ...activities]);
+  }
+  return finalUpdated;
+}
+
 export function updateActivity(updated: Activity): void {
+  const now = new Date().toISOString();
+  const finalUpdated: Activity = {
+    ...updated,
+    updatedAt: now,
+  };
   const activities = getStoredActivities();
   const idx = activities.findIndex(a => a.id === updated.id);
   if (idx !== -1) {
-    activities[idx] = {
-      ...updated,
-      updatedAt: new Date().toISOString(),
+    activities[idx] = finalUpdated;
+    saveActivities([...activities]);
+  } else {
+    saveActivities([finalUpdated, ...activities]);
+  }
+
+  saveActivityToFirestore(finalUpdated).catch(err => {
+    console.warn('Async updateActivityToFirestore note:', err);
+  });
+}
+
+/**
+ * Menghapus jadwal kegiatan dari koleksi aktif `activities` dan memindahkannya
+ * ke koleksi arsip sementara `tempkegiatanlama` agar dapat dipulihkan oleh Admin sewaktu-waktu,
+ * serta mengunci ID kegiatan di `system_counters/activity_id_seq` agar tidak pernah dipakai ulang.
+ */
+export async function deleteActivityAsync(id: string, reason?: string): Promise<void> {
+  const activities = getStoredActivities();
+  const target = activities.find(a => a.id === id);
+
+  if (target) {
+    const archivedActivity: Activity = {
+      ...target,
+      deletedAt: new Date().toISOString(),
+      deletedReason: reason || 'Agenda dihapus oleh Admin (Tersimpan di tempkegiatanlama)',
     };
-    saveActivities(activities);
+
+    const currentDeleted = getStoredTempKegiatanLama();
+    const updatedDeleted = [
+      archivedActivity,
+      ...currentDeleted.filter(a => a.id !== archivedActivity.id),
+    ];
+    saveTempKegiatanLama(updatedDeleted);
+
+    try {
+      await saveToTempKegiatanLamaFirestore(archivedActivity);
+    } catch (err) {
+      console.warn('Firestore saveToTempKegiatanLama note:', err);
+    }
+  } else {
+    await recordAllocatedActivityIdInCounter(id);
+  }
+
+  const filtered = activities.filter(a => a.id !== id);
+  saveActivities(filtered);
+
+  try {
+    await deleteActivityFromFirestore(id);
+  } catch (err) {
+    console.warn('Firestore deleteActivityFromFirestore note:', err);
   }
 }
 
 export function deleteActivity(id: string): void {
-  const activities = getStoredActivities();
-  const filtered = activities.filter(a => a.id !== id);
-  saveActivities(filtered);
+  deleteActivityAsync(id).catch(err => {
+    console.warn('Async deleteActivity note:', err);
+  });
+}
+
+/**
+ * Memulihkan (restore) jadwal kegiatan yang terhapus dari koleksi `tempkegiatanlama`
+ * kembali ke koleksi aktif `activities` di Firestore (hanya melalui konfirmasi manual Admin).
+ */
+export async function restoreActivityFromTempKegiatanLamaAsync(
+  deletedActivity: Activity
+): Promise<Activity> {
+  const activeActivities = getStoredActivities();
+  const tempDeleted = getStoredTempKegiatanLama();
+
+  let targetId = deletedActivity.id;
+  const idOccupiedByOther = activeActivities.some(
+    a => a.id === targetId && a.judul.toLowerCase().trim() !== deletedActivity.judul.toLowerCase().trim()
+  );
+  if (!targetId || idOccupiedByOther) {
+    targetId = await allocateUniqueActivityIdFromServer(activeActivities, tempDeleted);
+  }
+
+  const restoredActivity: Activity = {
+    ...deletedActivity,
+    id: targetId,
+    updatedAt: new Date().toISOString(),
+  };
+  delete (restoredActivity as any).deletedAt;
+  delete (restoredActivity as any).deletedReason;
+
+  await saveActivityToFirestore(restoredActivity);
+
+  try {
+    await deleteFromTempKegiatanLamaFirestore(deletedActivity.id);
+  } catch (err) {
+    console.warn('Warning removing restored activity from tempkegiatanlama:', err);
+  }
+
+  const updatedDeleted = tempDeleted.filter(a => a.id !== deletedActivity.id);
+  saveTempKegiatanLama(updatedDeleted);
+
+  const updatedActive = [
+    restoredActivity,
+    ...getStoredActivities().filter(a => a.id !== restoredActivity.id),
+  ];
+  saveActivities(updatedActive);
+
+  soundEffects.playSuccess();
+  return restoredActivity;
 }
 
 export function recordAttendance(
@@ -2152,7 +2545,7 @@ export function recordAttendance(
     memberNama: member.nama,
     memberNik: member.nik,
     memberPeran: member.peranKeluarga,
-    memberFotoUrl: member.fotoUrl,
+    memberFotoUrl: member.fotoUrl && member.fotoUrl.startsWith('data:') && member.fotoUrl.length > 5000 ? '' : member.fotoUrl,
     scanTimestamp: now.toISOString(),
     scanTimeFormatted: timeFormatted,
     activityId: activity.id,
@@ -2164,6 +2557,12 @@ export function recordAttendance(
   activity.updatedAt = now.toISOString();
 
   saveActivities(activities);
+
+  // Sinkronkan presensi langsung ke koleksi Firestore 'activities' agar langsung muncul di semua device
+  saveActivityToFirestore(activity).catch(err => {
+    console.warn('Firestore attendance sync note:', err);
+  });
+
   return { success: true, alreadyAttended: false, isNewToPeserta, attendee };
 }
 

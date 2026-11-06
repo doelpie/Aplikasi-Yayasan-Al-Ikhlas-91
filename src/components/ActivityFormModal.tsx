@@ -1,34 +1,92 @@
-import React, { useState } from 'react';
-import { Activity, ActivityType, Member } from '../types';
-import { X, Calendar, Clock, MapPin, Users, CheckSquare, Square, Search, Sparkles, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Activity, ActivityType, Member, TempKegiatanSebelumSimpan } from '../types';
+import { X, Calendar, Clock, MapPin, Users, Search, Check, RefreshCw, Smartphone } from 'lucide-react';
 import { getPeranLabel, maskNik, getInitials } from '../utils/storage';
+import {
+  generateUniqueIdTempKegiatan,
+  syncDraftToTempKegiatanSebelumSimpan,
+  resolveIpLocation
+} from '../utils/tempPreRegTracker';
 
 interface ActivityFormModalProps {
   activity?: Activity | null;
+  resumeDraft?: TempKegiatanSebelumSimpan | null;
   allMembers: Member[];
   onClose: () => void;
-  onSave: (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>) => void;
+  onSave: (data: Omit<Activity, 'id' | 'createdAt' | 'updatedAt' | 'kehadiran'>, draftIdToFinalize?: string) => void;
 }
 
 export const ActivityFormModal: React.FC<ActivityFormModalProps> = ({
   activity,
+  resumeDraft,
   allMembers,
   onClose,
   onSave,
 }) => {
   const isEdit = !!activity;
 
-  const [judul, setJudul] = useState(activity?.judul || '');
-  const [jenis, setJenis] = useState<ActivityType>(activity?.jenis || 'pengajian_umum');
-  const [tanggal, setTanggal] = useState(activity?.tanggal || new Date().toISOString().slice(0, 10));
-  const [jamMulai, setJamMulai] = useState(activity?.jamMulai || '19:30');
-  const [jamSelesai, setJamSelesai] = useState(activity?.jamSelesai || '21:30');
-  const [lokasi, setLokasi] = useState(activity?.lokasi || 'Gedung Yayasan Al Ikhlas Sembilan Satu Dalung');
-  const [deskripsi, setDeskripsi] = useState(activity?.deskripsi || '');
-  const [pesertaIds, setPesertaIds] = useState<string[]>(activity?.pesertaIds || []);
+  const [judul, setJudul] = useState(activity?.judul || resumeDraft?.judul || '');
+  const [jenis, setJenis] = useState<ActivityType>(activity?.jenis || resumeDraft?.jenis || 'pengajian_umum');
+  const [tanggal, setTanggal] = useState(activity?.tanggal || resumeDraft?.tanggal || new Date().toISOString().slice(0, 10));
+  const [jamMulai, setJamMulai] = useState(activity?.jamMulai || resumeDraft?.jamMulai || '19:30');
+  const [jamSelesai, setJamSelesai] = useState(activity?.jamSelesai || resumeDraft?.jamSelesai || '21:30');
+  const [lokasi, setLokasi] = useState(activity?.lokasi || resumeDraft?.lokasi || 'Gedung Yayasan Al Ikhlas Sembilan Satu Dalung');
+  const [deskripsi, setDeskripsi] = useState(activity?.deskripsi || resumeDraft?.deskripsi || '');
+  const [pesertaIds, setPesertaIds] = useState<string[]>(activity?.pesertaIds || resumeDraft?.pesertaIds || []);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState<'all' | 'kepala_keluarga' | 'istri' | 'anak'>('all');
   const [error, setError] = useState<string | null>(null);
+
+  // State untuk sinkronisasi otomatis 5 detik ke koleksi 'tempkegiatansebelumsimpan'
+  const [draftId, setDraftId] = useState<string>(resumeDraft?.idtempkegiatan || '');
+  const [lastDraftSyncTime, setLastDraftSyncTime] = useState<string | null>(null);
+  const [isDraftSyncing, setIsDraftSyncing] = useState(false);
+  const draftCreatedAtRef = useRef<string>(resumeDraft?.createdAt || new Date().toISOString());
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (!draftId && (judul.trim().length > 0 || deskripsi.trim().length > 0 || pesertaIds.length > 0)) {
+      resolveIpLocation().then((ipLoc) => {
+        setDraftId(prev => prev || generateUniqueIdTempKegiatan(ipLoc));
+      });
+    }
+  }, [isEdit, draftId, judul, deskripsi, pesertaIds.length]);
+
+  // Auto-sync setiap 5 detik ke koleksi Firestore 'tempkegiatansebelumsimpan' saat pengguna mulai mengisi agenda
+  useEffect(() => {
+    if (isEdit) return;
+    if (!judul.trim() && !deskripsi.trim() && pesertaIds.length === 0) return;
+
+    const currentDraftId = draftId || generateUniqueIdTempKegiatan();
+    if (!draftId) {
+      setDraftId(currentDraftId);
+    }
+
+    const timer = setTimeout(async () => {
+      setIsDraftSyncing(true);
+      try {
+        await syncDraftToTempKegiatanSebelumSimpan(currentDraftId, {
+          statusDraft: 'sedang_mengisi',
+          judul: judul.trim(),
+          jenis,
+          tanggal,
+          jamMulai,
+          jamSelesai,
+          lokasi: lokasi.trim(),
+          deskripsi: deskripsi.trim(),
+          pesertaIds,
+          createdAt: draftCreatedAtRef.current,
+        });
+        setLastDraftSyncTime(new Date().toLocaleTimeString('id-ID'));
+      } catch (err) {
+        console.warn('Auto-sync draft kegiatan warning:', err);
+      } finally {
+        setIsDraftSyncing(false);
+      }
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [isEdit, draftId, judul, jenis, tanggal, jamMulai, jamSelesai, lokasi, deskripsi, pesertaIds]);
 
   // Filter approved members for attendees selection
   const approvedMembers = allMembers.filter(m => m.status === 'disetujui');
@@ -78,16 +136,19 @@ export const ActivityFormModal: React.FC<ActivityFormModalProps> = ({
       return;
     }
 
-    onSave({
-      judul: judul.trim(),
-      jenis,
-      tanggal,
-      jamMulai,
-      jamSelesai: jamSelesai || undefined,
-      lokasi: lokasi.trim() || undefined,
-      deskripsi: deskripsi.trim(),
-      pesertaIds,
-    });
+    onSave(
+      {
+        judul: judul.trim(),
+        jenis,
+        tanggal,
+        jamMulai,
+        jamSelesai: jamSelesai || undefined,
+        lokasi: lokasi.trim() || undefined,
+        deskripsi: deskripsi.trim(),
+        pesertaIds,
+      },
+      draftId || undefined
+    );
   };
 
   return (
@@ -103,8 +164,26 @@ export const ActivityFormModal: React.FC<ActivityFormModalProps> = ({
               {isEdit ? 'Edit Jadwal Kegiatan' : 'Tambah Jadwal Kegiatan Yayasan'}
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              Jadwal akan otomatis masuk ke Daftar Kegiatan dan Kalender Kegiatan
+              Jadwal otomatis tersinkron ke Firestore &amp; muncul sama di semua perangkat (Laptop/HP)
             </p>
+            {!isEdit && draftId && (
+              <div className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-[#0b5d34]">
+                {isDraftSyncing ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
+                    <span>Menyimpan draft sementara ke tempkegiatansebelumsimpan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Smartphone className="w-3 h-3 text-emerald-600" />
+                    <span>
+                      Auto-Sync Draft 5d Aktif ({draftId.slice(0, 18)}...)
+                      {lastDraftSyncTime ? ` • Tersimpan ${lastDraftSyncTime}` : ''}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <button
             onClick={onClose}

@@ -160,6 +160,33 @@ export interface Activity {
   kehadiran: ActivityAttendee[]; // Daftar presensi anggota yang hadir scan QR
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string; // ISO date string when moved to tempkegiatanlama
+  deletedReason?: string;
+}
+
+/**
+ * Koleksi 'tempkegiatansebelumsimpan':
+ * Menyimpan sementara input pembuatan/edit jadwal kegiatan secara real-time (interval 5 detik)
+ * dengan keunikan idtempkegiatan berdasarkan IP/Location, Browser, Versi HP/OS, dan IMEI/Device ID.
+ */
+export interface TempKegiatanSebelumSimpan {
+  idtempkegiatan: string;
+  ipLocation: string;
+  browserType: string;
+  deviceVersion: string;
+  deviceImei: string;
+  statusDraft: 'sedang_mengisi' | 'selesai_simpan';
+  finalActivityId?: string;
+  judul?: string;
+  jenis?: ActivityType;
+  tanggal?: string;
+  jamMulai?: string;
+  jamSelesai?: string;
+  lokasi?: string;
+  deskripsi?: string;
+  pesertaIds?: string[];
+  createdAt: string; // ISO string
+  updatedAt: string; // ISO string
 }
 
 // ==========================================
@@ -200,7 +227,7 @@ export interface FlaggedMemberAnomaly {
 export interface BugDiagnosticResult {
   id: string;
   name: string;
-  category: 'KONEKSI' | 'INTEGRITAS_DATA' | 'RELASI_KELUARGA' | 'STORAGE_QUOTA' | 'SECURITY' | 'AUDIT_FOTO_DOKUMEN';
+  category: 'KONEKSI' | 'INTEGRITAS_DATA' | 'RELASI_KELUARGA' | 'STORAGE_QUOTA' | 'SECURITY' | 'AUDIT_FOTO_DOKUMEN' | 'JADWAL_PRESENSI';
   status: 'PASS' | 'WARN' | 'FAIL' | 'PENDING';
   message: string;
   latencyMs?: number;
