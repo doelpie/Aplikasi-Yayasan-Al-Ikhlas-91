@@ -598,6 +598,12 @@ export async function runBugDiagnostics(members?: Member[]): Promise<BugDiagnost
   }
 
   // 8. Diagnostik Pembuatan Jadwal & Sinkronisasi Kegiatan Lintas Perangkat (Laptop / HP Admin & User)
+  try {
+    await reconcileAuthoritativeActivities();
+  } catch (err) {
+    console.warn('Auto reconcile before diagnostics note:', err);
+  }
+
   const localActivities = getStoredActivities();
   const localDeletedActivities = getStoredTempKegiatanLama();
   let remoteActivities: Activity[] = [];

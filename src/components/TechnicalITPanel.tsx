@@ -177,7 +177,6 @@ export const TechnicalITPanel: React.FC<TechnicalITPanelProps> = ({
       }
     });
 
-    handleRunBugDiagnostics();
     handleRunAutoRepair();
 
     return () => {

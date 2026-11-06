@@ -164,9 +164,13 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       await html5QrCodeRef.current.start(
         { facingMode: 'environment' },
         {
-          fps: 10,
-          qrbox: { width: 240, height: 240 },
+          fps: 12,
           aspectRatio: 1.0,
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth || 320, viewfinderHeight || 320);
+            const boxSize = Math.max(210, Math.min(280, Math.floor(minEdge * 0.78)));
+            return { width: boxSize, height: boxSize };
+          },
         },
         (decodedText) => {
           const member = parseQrData(decodedText);
@@ -396,10 +400,22 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
         <div className="mt-3 flex-1 flex flex-col justify-center">
           {/* 1. CAMERA MODE */}
           {scanMode === 'camera' && (
-            <div className="space-y-2">
-              <div className="relative rounded-2xl overflow-hidden bg-black aspect-square max-h-[300px] mx-auto flex items-center justify-center w-full border-2 border-emerald-800">
-                <div id={scannerContainerId} className="w-full h-full" />
-                
+            <div className="space-y-2.5 flex flex-col items-center">
+              <div className="relative rounded-2xl overflow-hidden bg-black w-full max-w-[330px] sm:max-w-[350px] aspect-square mx-auto flex items-center justify-center border-2 border-[#0b5d34] shadow-inner">
+                <div id={scannerContainerId} className="w-full h-full aspect-square" />
+
+                {/* Bingkai Persegi (Kotak 1:1) Panduan Scan QR Code Seragam di Laptop & HP */}
+                {!cameraError && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-[5]">
+                    <div className="relative w-[76%] h-[76%] aspect-square rounded-2xl border border-emerald-400/40">
+                      <span className="absolute -top-0.5 -left-0.5 w-7 h-7 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl" />
+                      <span className="absolute -top-0.5 -right-0.5 w-7 h-7 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl" />
+                      <span className="absolute -bottom-0.5 -left-0.5 w-7 h-7 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl" />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-7 h-7 border-b-4 border-r-4 border-emerald-400 rounded-br-xl" />
+                    </div>
+                  </div>
+                )}
+
                 {cameraError && (
                   <div className="absolute inset-0 bg-black/85 p-6 flex flex-col items-center justify-center text-center text-white space-y-2 z-10">
                     <AlertCircle className="w-8 h-8 text-amber-400" />
@@ -415,7 +431,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                 )}
               </div>
               <p className="text-center text-[11px] text-gray-500">
-                Arahkan kamera ke QR Code pada Kartu Anggota Yayasan
+                Posisikan QR Code Kartu Anggota di dalam kotak persegi untuk mencatat kehadiran
               </p>
             </div>
           )}

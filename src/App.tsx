@@ -84,8 +84,8 @@ export default function App() {
   const latestRemoteMembersRef = React.useRef<Member[]>(getStoredMembers());
   const latestRemoteWaitingRef = React.useRef<Member[]>(getStoredTempDataMenunggu());
   const latestRemoteDeletedRef = React.useRef<Member[]>(getStoredTempDataLama());
-  const latestRemoteActivitiesRef = React.useRef<Activity[]>(getStoredActivities());
-  const latestRemoteDeletedActivitiesRef = React.useRef<Activity[]>(getStoredTempKegiatanLama());
+  const latestRemoteActivitiesRef = React.useRef<Activity[] | undefined>(undefined);
+  const latestRemoteDeletedActivitiesRef = React.useRef<Activity[] | undefined>(undefined);
 
   // Modals & Popups State
   const [verifyingMember, setVerifyingMember] = useState<Member | null>(null);
@@ -559,7 +559,7 @@ export default function App() {
       remoteDeletedActs
     );
     setActivities(unifiedActivities);
-    setTempKegiatanLama(remoteDeletedActs);
+    setTempKegiatanLama(remoteDeletedActs || getStoredTempKegiatanLama());
   };
 
   const handleRecordAttendance = (

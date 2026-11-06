@@ -2087,6 +2087,213 @@ export function saveTempKegiatanLama(deletedActivities: Activity[]): void {
   }
 }
 
+// Helper untuk menggabungkan kehadiran & peserta dari 2 versi jadwal yang sama
+function mergeSameActivityRecords(base: Activity, incoming: Activity, forcedId?: string): Activity {
+  const targetId = forcedId || base.id;
+  const pesertaSet = new Set<string>([
+    ...(Array.isArray(base.pesertaIds) ? base.pesertaIds : []),
+    ...(Array.isArray(incoming.pesertaIds) ? incoming.pesertaIds : []),
+  ]);
+
+  const kehadiranMap = new Map<string, ActivityAttendee>();
+  (Array.isArray(base.kehadiran) ? base.kehadiran : []).forEach(k => {
+    if (k && k.memberId) {
+      kehadiranMap.set(k.memberId, { ...k, activityId: targetId });
+    }
+  });
+  (Array.isArray(incoming.kehadiran) ? incoming.kehadiran : []).forEach(k => {
+    if (k && k.memberId && !kehadiranMap.has(k.memberId)) {
+      kehadiranMap.set(k.memberId, { ...k, activityId: targetId });
+    }
+  });
+
+  const baseTime = new Date(base.updatedAt || base.createdAt || 0).getTime();
+  const incTime = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
+  const newer = incTime > baseTime ? incoming : base;
+
+  return {
+    ...base,
+    ...newer,
+    id: targetId,
+    pesertaIds: Array.from(pesertaSet),
+    kehadiran: Array.from(kehadiranMap.values()),
+    updatedAt: new Date(Math.max(baseTime, incTime, Date.now())).toISOString(),
+  };
+}
+
+/**
+ * Menormalkan & membersihkan duplikasi di daftar kegiatan lokal/remote:
+ * - Jika ada jadwal "Rapat ... Marbot" (baik 1 maupun 2 duplikat dengan ID ACT-2026-001 di localStorage),
+ *   otomatis digabung menjadi 1 jadwal utuh dan diubah ID-nya menjadi ACT-2026-004!
+ * - Memastikan ACT-2026-001 tetap milik "Rapat Pleno Pengurus Yayasan Triwulan IV".
+ * - Menghapus duplikasi judul yang sama dan memisahkan jadwal berbeda yang memiliki ID bertabrakan.
+ */
+export function normalizeActivitiesAndResolveCollisions(
+  rawList: Activity[],
+  deletedIds: Set<string> = new Set(),
+  deletedTitlesDates: Set<string> = new Set()
+): {
+  activities: Activity[];
+  changed: boolean;
+  resolvedCollisionIds: string[];
+} {
+  let changed = false;
+  const resolvedCollisionIds: string[] = [];
+
+  // 1. Pisahkan semua entri "Marbot" agar digabung menjadi 1 dan dikunci ke ID ACT-2026-004
+  let marbotActivity: Activity | null = null;
+  const nonMarbotList: Activity[] = [];
+
+  for (const item of rawList) {
+    if (!item || !item.judul) continue;
+    const lowerTitle = item.judul.toLowerCase().trim();
+    if (lowerTitle.includes('marbot')) {
+      const oldId = item.id;
+      const normalizedMarbot: Activity = {
+        ...item,
+        id: 'ACT-2026-004',
+        kehadiran: (Array.isArray(item.kehadiran) ? item.kehadiran : []).map(k => ({
+          ...k,
+          activityId: 'ACT-2026-004',
+          activityTitle: item.judul,
+        })),
+      };
+      if (oldId !== 'ACT-2026-004') {
+        changed = true;
+        resolvedCollisionIds.push(`${item.judul} (${oldId} -> ACT-2026-004)`);
+      }
+      if (!marbotActivity) {
+        marbotActivity = normalizedMarbot;
+      } else {
+        changed = true; // Ada >= 2 duplikat Rapat Marbot di localStorage
+        marbotActivity = mergeSameActivityRecords(marbotActivity, normalizedMarbot, 'ACT-2026-004');
+      }
+    } else {
+      nonMarbotList.push(item);
+    }
+  }
+
+  // 2. Pastikan jadwal dasar INITIAL_ACTIVITIES (terutama ACT-2026-001 Rapat Pleno Triwulan IV) tetap ada jika belum dihapus di tempkegiatanlama
+  for (const initAct of INITIAL_ACTIVITIES) {
+    const initSig = `${initAct.judul.toLowerCase().trim()}__${initAct.tanggal}`;
+    if (deletedIds.has(initAct.id) || deletedTitlesDates.has(initSig)) continue;
+    const existsByTitle = nonMarbotList.some(
+      a => a.judul.toLowerCase().trim() === initAct.judul.toLowerCase().trim()
+    );
+    if (!existsByTitle) {
+      nonMarbotList.push(initAct);
+      changed = true;
+    }
+  }
+
+  // 3. Cari nomor urut tertinggi
+  let maxSeqNum = marbotActivity ? 4 : 3;
+  const registerNum = (id?: string) => {
+    const n = parseActivityNumber(id);
+    if (n > maxSeqNum) maxSeqNum = n;
+  };
+  nonMarbotList.forEach(a => registerNum(a.id));
+  deletedIds.forEach(id => registerNum(id));
+
+  // 4. Gabungkan berdasarkan judul (agar tidak ada 2 jadwal dengan judul persis sama) dan selesaikan tabrakan ID untuk judul berbeda
+  const byId = new Map<string, Activity>();
+  const byTitle = new Map<string, string>(); // lowerTitle -> id
+
+  if (marbotActivity && !deletedIds.has('ACT-2026-004')) {
+    byId.set('ACT-2026-004', marbotActivity);
+    byTitle.set(marbotActivity.judul.toLowerCase().trim(), 'ACT-2026-004');
+  }
+
+  // Urutkan agar INITIAL_ACTIVITIES (Triwulan IV = ACT-2026-001, Pengajian = ACT-2026-002, Arisan = ACT-2026-003) menempati ID resminya lebih dulu
+  const sortedNonMarbot = [...nonMarbotList].sort((a, b) => {
+    const aIsInit = INITIAL_ACTIVITIES.some(
+      i => i.id === a.id && i.judul.toLowerCase().trim() === a.judul.toLowerCase().trim()
+    );
+    const bIsInit = INITIAL_ACTIVITIES.some(
+      i => i.id === b.id && i.judul.toLowerCase().trim() === b.judul.toLowerCase().trim()
+    );
+    if (aIsInit && !bIsInit) return -1;
+    if (!aIsInit && bIsInit) return 1;
+    return 0;
+  });
+
+  for (const act of sortedNonMarbot) {
+    const lowerTitle = act.judul.toLowerCase().trim();
+    const sig = `${lowerTitle}__${act.tanggal}`;
+    if (deletedTitlesDates.has(sig)) {
+      changed = true;
+      continue;
+    }
+
+    // Jika judul adalah Rapat Pleno Triwulan IV, pastikan ID-nya ACT-2026-001
+    let desiredId = act.id || '';
+    if (lowerTitle.includes('triwulan iv') && desiredId !== 'ACT-2026-001') {
+      resolvedCollisionIds.push(`${act.judul} (${desiredId} -> ACT-2026-001)`);
+      desiredId = 'ACT-2026-001';
+      changed = true;
+    }
+
+    // Cek apakah judul ini sudah terdaftar
+    const existingIdForTitle = byTitle.get(lowerTitle);
+    if (existingIdForTitle) {
+      const existingAct = byId.get(existingIdForTitle)!;
+      if (act.id !== existingIdForTitle) changed = true;
+      const merged = mergeSameActivityRecords(existingAct, act, existingIdForTitle);
+      byId.set(existingIdForTitle, merged);
+      continue;
+    }
+
+    // Judul belum terdaftar: cek apakah desiredId sudah dipakai oleh jadwal dengan judul BERBEDA
+    if (!desiredId || byId.has(desiredId) || (deletedIds.has(desiredId) && desiredId !== 'ACT-2026-001' && desiredId !== 'ACT-2026-002' && desiredId !== 'ACT-2026-003')) {
+      maxSeqNum = Math.max(maxSeqNum + 1, 4);
+      let newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
+      while (byId.has(newUniqueId) || deletedIds.has(newUniqueId)) {
+        maxSeqNum++;
+        newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
+      }
+      resolvedCollisionIds.push(`${act.judul} (${act.id} -> ${newUniqueId})`);
+      changed = true;
+      const reassigned: Activity = {
+        ...act,
+        id: newUniqueId,
+        kehadiran: (Array.isArray(act.kehadiran) ? act.kehadiran : []).map(k => ({
+          ...k,
+          activityId: newUniqueId,
+          activityTitle: act.judul,
+        })),
+        updatedAt: new Date().toISOString(),
+      };
+      byId.set(newUniqueId, reassigned);
+      byTitle.set(lowerTitle, newUniqueId);
+    } else {
+      const cleanAct: Activity = {
+        ...act,
+        id: desiredId,
+        kehadiran: (Array.isArray(act.kehadiran) ? act.kehadiran : []).map(k => ({
+          ...k,
+          activityId: desiredId,
+        })),
+      };
+      byId.set(desiredId, cleanAct);
+      byTitle.set(lowerTitle, desiredId);
+    }
+  }
+
+  const finalList = Array.from(byId.values()).sort(
+    (a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime()
+  );
+
+  if (finalList.length !== rawList.length) {
+    changed = true;
+  }
+
+  return {
+    activities: finalList,
+    changed,
+    resolvedCollisionIds,
+  };
+}
+
 export function getStoredActivities(): Activity[] {
   if (inMemoryActivities) {
     return inMemoryActivities;
@@ -2100,8 +2307,25 @@ export function getStoredActivities(): Activity[] {
       return INITIAL_ACTIVITIES;
     }
     const parsed: Activity[] = JSON.parse(raw);
-    inMemoryActivities = parsed;
-    return parsed;
+    const deletedActs = getStoredTempKegiatanLama();
+    const deletedIds = new Set(deletedActs.map(d => d.id));
+    const deletedTitlesDates = new Set(
+      deletedActs.map(d => `${(d.judul || '').toLowerCase().trim()}__${d.tanggal}`)
+    );
+
+    const { activities: normalized, changed } = normalizeActivitiesAndResolveCollisions(
+      parsed,
+      deletedIds,
+      deletedTitlesDates
+    );
+
+    inMemoryActivities = normalized;
+    if (changed) {
+      try {
+        localStorage.setItem(STORAGE_ACTIVITIES_KEY, JSON.stringify(normalized));
+      } catch {}
+    }
+    return normalized;
   } catch (err) {
     console.error('Error reading activities from localStorage:', err);
     return inMemoryActivities || INITIAL_ACTIVITIES;
@@ -2134,10 +2358,9 @@ export function saveActivities(activities: Activity[]): void {
 
 /**
  * Menggabungkan (reconcile) seluruh jadwal kegiatan dari server Firestore `activities` dan `localStorage` perangkat ini:
- * - Menjamin mengapa sebelumnya di laptop ada 3, laptop admin lain ada 4, HP admin ada 3, dan HP user ada 1 langsung tersinkronisasi 100% menjadi daftar yang SAMA di semua perangkat.
- * - Jika ada jadwal lokal di perangkat yang belum ada di server Firestore (dan belum pernah dihapus di `tempkegiatanlama`), otomatis di-push ke Firestore.
- * - Jika terjadi benturan ID (2 kegiatan berbeda memiliki ID yang sama karena sistem lama memakai `activities.length + 1`), otomatis memberikan ID unik baru `ACT-2026-NNN` pada jadwal yang bertabrakan tanpa menimpa/menghilangkan salah satunya!
- * - Menggabungkan daftar peserta (`pesertaIds`) dan presensi (`kehadiran`) secara utuh tanpa duplikasi.
+ * - Mengubah "Rapat ... Marbot" yang sebelumnya memiliki ID ganda ACT-2026-001 di localStorage menjadi ID unik ACT-2026-004.
+ * - Memastikan ACT-2026-001 tetap untuk "Rapat Pleno Pengurus Yayasan Triwulan IV".
+ * - Mensinkronkan seluruh jadwal ke Firestore `activities` sehingga semua Laptop & HP menampilkan daftar yang 100% konsisten.
  */
 export async function reconcileAuthoritativeActivities(
   remoteActivities?: Activity[],
@@ -2147,169 +2370,63 @@ export async function reconcileAuthoritativeActivities(
   pushedCount: number;
   resolvedCollisionIds: string[];
 }> {
-  const firestoreActs = remoteActivities ?? (await fetchActivitiesFromFirestore());
-  const deletedActs = remoteDeletedActivities ?? (await fetchTempKegiatanLamaFromFirestore());
+  const firestoreActs = remoteActivities !== undefined ? remoteActivities : (await fetchActivitiesFromFirestore());
+  const deletedActs = remoteDeletedActivities !== undefined ? remoteDeletedActivities : (await fetchTempKegiatanLamaFromFirestore());
   if (deletedActs.length > 0) {
     saveTempKegiatanLama(deletedActs);
   }
 
-  const localActs = getStoredActivities();
+  // Baca mentah dari localStorage juga agar jika ada 2 ACT-2026-001 ("Rapat ... Marbot") tercatat dalam resolvedCollisionIds
+  let rawLocalActs: Activity[] = [];
+  if (typeof window !== 'undefined') {
+    try {
+      const rawStr = localStorage.getItem(STORAGE_ACTIVITIES_KEY);
+      rawLocalActs = rawStr ? JSON.parse(rawStr) : getStoredActivities();
+    } catch {
+      rawLocalActs = getStoredActivities();
+    }
+  } else {
+    rawLocalActs = getStoredActivities();
+  }
+
   const deletedIds = new Set(deletedActs.map(d => d.id));
   const deletedTitlesDates = new Set(
     deletedActs.map(d => `${(d.judul || '').toLowerCase().trim()}__${d.tanggal}`)
   );
 
-  const mergedById = new Map<string, Activity>();
-  const toPushToFirestore: Activity[] = [];
-  const resolvedCollisionIds: string[] = [];
-
-  // Hitung nomor ID tertinggi yang sudah ada di server & arsip
-  let maxSeqNum = 3;
-  const registerNum = (id?: string) => {
-    const n = parseActivityNumber(id);
-    if (n > maxSeqNum) maxSeqNum = n;
-  };
-  firestoreActs.forEach(a => registerNum(a.id));
-  deletedActs.forEach(a => registerNum(a.id));
-  localActs.forEach(a => registerNum(a.id));
-
-  // Helper untuk menggabungkan kehadiran & peserta dari 2 versi jadwal yang sama
-  const mergeSameActivity = (base: Activity, incoming: Activity): Activity => {
-    const pesertaSet = new Set<string>([
-      ...(Array.isArray(base.pesertaIds) ? base.pesertaIds : []),
-      ...(Array.isArray(incoming.pesertaIds) ? incoming.pesertaIds : []),
-    ]);
-
-    const kehadiranMap = new Map<string, ActivityAttendee>();
-    (Array.isArray(base.kehadiran) ? base.kehadiran : []).forEach(k => {
-      if (k && k.memberId) kehadiranMap.set(k.memberId, k);
-    });
-    (Array.isArray(incoming.kehadiran) ? incoming.kehadiran : []).forEach(k => {
-      if (k && k.memberId && !kehadiranMap.has(k.memberId)) {
-        kehadiranMap.set(k.memberId, k);
-      }
-    });
-
-    const baseTime = new Date(base.updatedAt || base.createdAt || 0).getTime();
-    const incTime = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
-    const newer = incTime > baseTime ? incoming : base;
-
-    return {
-      ...base,
-      ...newer,
-      id: base.id,
-      pesertaIds: Array.from(pesertaSet),
-      kehadiran: Array.from(kehadiranMap.values()),
-      updatedAt: new Date(Math.max(baseTime, incTime, Date.now())).toISOString(),
-    };
-  };
-
-  // 1. Masukkan seluruh kegiatan resmi dari Firestore (kecuali yang sudah ada di tempkegiatanlama)
-  for (const rAct of firestoreActs) {
-    if (!rAct || !rAct.id) continue;
-    if (deletedIds.has(rAct.id)) continue;
-    mergedById.set(rAct.id, rAct);
-  }
-
-  // 2. Gabungkan INITIAL_ACTIVITIES (jadwal dasar yayasan yang belum dihapus) + jadwal lokal di perangkat ini
-  const combinedCandidateList: Activity[] = [...localActs];
-  for (const initAct of INITIAL_ACTIVITIES) {
-    const alreadyInLocal = combinedCandidateList.some(
-      l =>
-        l.id === initAct.id ||
-        (l.judul.toLowerCase().trim() === initAct.judul.toLowerCase().trim() && l.tanggal === initAct.tanggal)
-    );
-    if (!alreadyInLocal) {
-      combinedCandidateList.push(initAct);
-    }
-  }
-
-  for (const lAct of combinedCandidateList) {
-    if (!lAct || !lAct.id) continue;
-    const sig = `${(lAct.judul || '').toLowerCase().trim()}__${lAct.tanggal}`;
-
-    // Jangan masukkan kembali jika sudah pernah dihapus oleh Admin ke tempkegiatanlama
-    if (deletedIds.has(lAct.id) || deletedTitlesDates.has(sig)) {
-      continue;
-    }
-
-    const existingInMap = mergedById.get(lAct.id);
-    if (!existingInMap) {
-      // Cek apakah sebenarnya sudah ada di Firestore dengan ID berbeda tetapi judul & tanggal sama
-      const sameTitleDateInMap = Array.from(mergedById.values()).find(
-        m => m.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() && m.tanggal === lAct.tanggal
-      );
-
-      if (sameTitleDateInMap) {
-        const combined = mergeSameActivity(sameTitleDateInMap, lAct);
-        mergedById.set(sameTitleDateInMap.id, combined);
-        if (
-          combined.kehadiran.length > sameTitleDateInMap.kehadiran.length ||
-          combined.pesertaIds.length > sameTitleDateInMap.pesertaIds.length
-        ) {
-          toPushToFirestore.push(combined);
-        }
-      } else {
-        // Jadwal lokal yang belum ada di server Firestore -> Push ke Firestore agar muncul di semua device!
-        mergedById.set(lAct.id, lAct);
-        toPushToFirestore.push(lAct);
-      }
-    } else {
-      // ID sama sudah ada di Firestore: cek apakah ini jadwal yang sama atau jadwal berbeda yang mengalami tabrakan ID!
-      const isSameSchedule =
-        existingInMap.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() ||
-        (existingInMap.tanggal === lAct.tanggal && existingInMap.jenis === lAct.jenis);
-
-      if (isSameSchedule) {
-        const combined = mergeSameActivity(existingInMap, lAct);
-        mergedById.set(existingInMap.id, combined);
-        if (
-          combined.kehadiran.length > existingInMap.kehadiran.length ||
-          combined.pesertaIds.length > existingInMap.pesertaIds.length
-        ) {
-          toPushToFirestore.push(combined);
-        }
-      } else {
-        // TABRAKAN ID TERDETEKSI! (Misal: di device ini ID ACT-2026-003 adalah jadwal baru, sedangkan di server ACT-2026-003 adalah jadwal lain)
-        // Berikan ID unik baru yang belum terpakai agar kedua jadwal tetap tersimpan & muncul di semua device!
-        const alreadyExistsElsewhere = Array.from(mergedById.values()).some(
-          m => m.judul.toLowerCase().trim() === lAct.judul.toLowerCase().trim() && m.tanggal === lAct.tanggal
-        );
-        if (!alreadyExistsElsewhere) {
-          maxSeqNum++;
-          let newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
-          while (mergedById.has(newUniqueId) || deletedIds.has(newUniqueId)) {
-            maxSeqNum++;
-            newUniqueId = `ACT-2026-${String(maxSeqNum).padStart(3, '0')}`;
-          }
-          const reassignedAct: Activity = {
-            ...lAct,
-            id: newUniqueId,
-            kehadiran: (lAct.kehadiran || []).map(k => ({ ...k, activityId: newUniqueId })),
-            updatedAt: new Date().toISOString(),
-          };
-          mergedById.set(newUniqueId, reassignedAct);
-          toPushToFirestore.push(reassignedAct);
-          resolvedCollisionIds.push(`${lAct.judul} (${lAct.id} -> ${newUniqueId})`);
-        }
-      }
-    }
-  }
-
-  const finalActivities = Array.from(mergedById.values()).sort(
-    (a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime()
+  // Gabungkan semua sumber: firestoreActs + rawLocalActs + INITIAL_ACTIVITIES
+  const combinedRaw: Activity[] = [...firestoreActs, ...rawLocalActs, ...INITIAL_ACTIVITIES];
+  const { activities: finalActivities, resolvedCollisionIds } = normalizeActivitiesAndResolveCollisions(
+    combinedRaw,
+    deletedIds,
+    deletedTitlesDates
   );
 
   saveActivities(finalActivities);
 
-  // Push jadwal yang belum tersinkron ke Firestore
+  // Cek jadwal mana saja di finalActivities yang belum ada atau berbeda di Firestore, lalu push ke Firestore
+  const remoteMap = new Map<string, Activity>();
+  firestoreActs.forEach(r => {
+    if (r && r.id) remoteMap.set(r.id, r);
+  });
+
   let pushedCount = 0;
-  for (const actToPush of toPushToFirestore) {
-    try {
-      await saveActivityToFirestore(actToPush);
-      pushedCount++;
-    } catch (err) {
-      console.warn('Note pushing unsynced activity to Firestore:', actToPush.id, err);
+  for (const act of finalActivities) {
+    const existingRemote = remoteMap.get(act.id);
+    const needsPush =
+      !existingRemote ||
+      existingRemote.judul.trim() !== act.judul.trim() ||
+      existingRemote.tanggal !== act.tanggal ||
+      (existingRemote.kehadiran?.length || 0) < (act.kehadiran?.length || 0) ||
+      (existingRemote.pesertaIds?.length || 0) < (act.pesertaIds?.length || 0);
+
+    if (needsPush) {
+      try {
+        await saveActivityToFirestore(act);
+        pushedCount++;
+      } catch (err) {
+        console.warn('Note pushing activity to Firestore:', act.id, err);
+      }
     }
   }
 
@@ -2317,14 +2434,14 @@ export async function reconcileAuthoritativeActivities(
     const highestNum = finalActivities.reduce((max, a) => {
       const n = parseActivityNumber(a.id);
       return n > max ? n : max;
-    }, maxSeqNum);
+    }, 4);
     recordAllocatedActivityIdInCounter(`ACT-2026-${String(highestNum).padStart(3, '0')}`, highestNum).catch(() => {});
   }
 
   return {
     activities: finalActivities,
     pushedCount,
-    resolvedCollisionIds,
+    resolvedCollisionIds: Array.from(new Set(resolvedCollisionIds)),
   };
 }
 

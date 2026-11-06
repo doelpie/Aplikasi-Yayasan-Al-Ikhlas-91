@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+/* Force QR Scanner container & video feed to maintain a 1:1 square on both Laptop (16:9 webcam) and HP */
+#qr-reader-container {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#qr-reader-container video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+#qr-reader-container #qr-shaded-region {
+  border-color: rgba(0, 0, 0, 0.48) !important;
+}
